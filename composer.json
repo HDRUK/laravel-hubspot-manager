@@ -1,0 +1,47 @@
+{
+    "name": "hdruk/laravel-hubspot-manager",
+    "description": "A laravel extension to make use of HubSpot user management",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Hdruk\\LaravelHubspotManager\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Hdruk\\LaravelHubspotManager\\Tests\\": "tests/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Loki Sinclair",
+            "email": "loki.sinclair@hdruk.ac.uk"
+        }
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "require": {
+        "illuminate/bus": "^10.0 || ^11.0 || ^12.0",
+        "illuminate/http": "^10.0 || ^11.0 || ^12.0",
+        "illuminate/queue": "^10.0 || ^11.0 || ^12.0",
+        "illuminate/support": "^10.0 || ^11.0 || ^12.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0 || ^9.0 || ^10.0",
+        "phpunit/phpunit": "^10.0 || ^11.0"
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Hdruk\\LaravelHubspotManager\\Providers\\LaravelHubspotManagerProvider"
+            ],
+            "aliases": {
+                "Hubspot": "Hdruk\\LaravelHubspotManager\\Facades\\Hubspot"
+            }
+        }
+    }
+}

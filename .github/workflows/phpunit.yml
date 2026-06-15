@@ -1,0 +1,48 @@
+name: Run Tests
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - master
+  pull_request:
+    branches:
+      - main
+      - dev
+      - master
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: [8.4]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, sqlite, pdo_sqlite
+          ini-values: date.timezone=UTC
+
+      - name: Get Composer Cache
+        id: composer-cache
+        uses: actions/cache@v3
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Dump autoload
+        run: composer dump-autoload
+
+      - name: Run PHPUnit
+        run: vendor/bin/phpunit --colors=always
