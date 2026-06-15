@@ -1,0 +1,151 @@
+<?php
+
+namespace Hdruk\LaravelHubspotManager\Services;
+
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
+use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
+use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
+
+class Hubspot
+{
+    protected string $baseUrl;
+    protected string $contactsEndpoint;
+    protected array $headers;
+
+    public function __construct()
+    {
+        $this->validateConfiguration();
+
+        $this->baseUrl = rtrim(config('hubspotmanager.default.access.hubspot_base_url'), '/');
+        $this->contactsEndpoint = config('hubspotmanager.default.endpoints.contacts');
+        $this->headers = [
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Bearer ' . config('hubspotmanager.default.access.hubspot_api_key'),
+        ];
+    }
+
+    public function createContact(array $properties): array
+    {
+        $response = Http::withHeaders($this->headers)
+            ->post("{$this->baseUrl}/{$this->contactsEndpoint}", [
+                'properties' => $properties,
+            ]);
+
+        $this->throwIfFailed($response);
+
+        return $response->json();
+    }
+
+    public function getContact(string $contactId, array $properties = []): array
+    {
+        $query = $properties ? ['properties' => implode(',', $properties)] : [];
+
+        $response = Http::withHeaders($this->headers)
+            ->get("{$this->baseUrl}/{$this->contactsEndpoint}/{$contactId}", $query);
+
+        $this->throwIfFailed($response);
+
+        return $response->json();
+    }
+
+    public function updateContact(string $contactId, array $properties): array
+    {
+        $response = Http::withHeaders($this->headers)
+            ->patch("{$this->baseUrl}/{$this->contactsEndpoint}/{$contactId}", [
+                'properties' => $properties,
+            ]);
+
+        $this->throwIfFailed($response);
+
+        return $response->json();
+    }
+
+    public function deleteContact(string $contactId): bool
+    {
+        $response = Http::withHeaders($this->headers)
+            ->delete("{$this->baseUrl}/{$this->contactsEndpoint}/{$contactId}");
+
+        $this->throwIfFailed($response);
+
+        return true;
+    }
+
+    public function createContacts(array $contacts): array
+    {
+        $inputs = array_map(fn (array $props) => ['properties' => $props], $contacts);
+
+        $response = Http::withHeaders($this->headers)
+            ->post("{$this->baseUrl}/{$this->contactsEndpoint}/batch/create", [
+                'inputs' => $inputs,
+            ]);
+
+        $this->throwIfFailed($response);
+
+        return $response->json();
+    }
+
+    public function updateContacts(array $contacts): array
+    {
+        $response = Http::withHeaders($this->headers)
+            ->post("{$this->baseUrl}/{$this->contactsEndpoint}/batch/update", [
+                'inputs' => $contacts,
+            ]);
+
+        $this->throwIfFailed($response);
+
+        return $response->json();
+    }
+
+    public function deleteContacts(array $contactIds): bool
+    {
+        $inputs = array_map(fn (string $id) => ['id' => $id], $contactIds);
+
+        $response = Http::withHeaders($this->headers)
+            ->post("{$this->baseUrl}/{$this->contactsEndpoint}/batch/archive", [
+                'inputs' => $inputs,
+            ]);
+
+        $this->throwIfFailed($response);
+
+        return true;
+    }
+
+    public function searchContacts(array $filters, array $properties = []): array
+    {
+        $payload = ['filterGroups' => [['filters' => $filters]]];
+
+        if ($properties) {
+            $payload['properties'] = $properties;
+        }
+
+        $response = Http::withHeaders($this->headers)
+            ->post("{$this->baseUrl}/{$this->contactsEndpoint}/search", $payload);
+
+        $this->throwIfFailed($response);
+
+        return $response->json();
+    }
+
+    private function throwIfFailed(Response $response): void
+    {
+        if ($response->failed()) {
+            throw HubspotApiException::fromResponse($response);
+        }
+    }
+
+    private function validateConfiguration(): void
+    {
+        $required = [
+            'hubspotmanager.default.access.hubspot_base_url',
+            'hubspotmanager.default.access.hubspot_api_key',
+        ];
+
+        foreach ($required as $key) {
+            if (empty(config($key))) {
+                throw HubspotConfigurationException::missingKey($key);
+            }
+        }
+    }
+}
