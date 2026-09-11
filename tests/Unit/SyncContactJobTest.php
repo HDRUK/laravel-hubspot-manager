@@ -136,7 +136,7 @@ class SyncContactJobTest extends TestCase
 
         $this->runJob('create');
 
-        $this->assertSame('hs-001', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-001', HubspotContact::contactIdForUser(1));
         $this->assertSame(1, HubspotContact::count());
     }
 
@@ -154,7 +154,7 @@ class SyncContactJobTest extends TestCase
         Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), 'hs-900'));
         Http::assertNotSent(fn ($r) => $r->method() === 'POST');
 
-        $this->assertSame('hs-900', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-900', HubspotContact::contactIdForUser(1));
 
         $log = HubspotSyncLog::query()->firstOrFail();
         $this->assertSame(200, $log->status_code);
@@ -173,7 +173,7 @@ class SyncContactJobTest extends TestCase
         Http::assertSent(fn ($r) => $r->method() === 'GET');
         Http::assertSent(fn ($r) => $r->method() === 'POST');
 
-        $this->assertSame('hs-001', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-001', HubspotContact::contactIdForUser(1));
         $this->assertSame(201, HubspotSyncLog::query()->firstOrFail()->status_code);
     }
 
@@ -190,7 +190,7 @@ class SyncContactJobTest extends TestCase
         Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), 'hs-900'));
         Http::assertNotSent(fn ($r) => $r->method() === 'POST');
 
-        $this->assertSame('hs-900', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-900', HubspotContact::contactIdForUser(1));
     }
 
     public function test_a_model_with_no_identity_is_never_looked_up(): void
@@ -241,7 +241,7 @@ class SyncContactJobTest extends TestCase
             $this->runJob('create');
         } finally {
             Http::assertNotSent(fn ($r) => $r->method() === 'POST');
-            $this->assertNull(HubspotContact::contactIdFor(1));
+            $this->assertNull(HubspotContact::contactIdForUser(1));
             $this->assertSame(500, HubspotSyncLog::query()->firstOrFail()->status_code);
         }
     }
@@ -262,7 +262,7 @@ class SyncContactJobTest extends TestCase
 
         Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), '247867309742'));
 
-        $this->assertSame('247867309742', HubspotContact::contactIdFor(1));
+        $this->assertSame('247867309742', HubspotContact::contactIdForUser(1));
 
         $log = HubspotSyncLog::query()->firstOrFail();
         $this->assertSame(200, $log->status_code);
@@ -284,7 +284,7 @@ class SyncContactJobTest extends TestCase
             $this->runJob('create');
         } finally {
             Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
-            $this->assertNull(HubspotContact::contactIdFor(1));
+            $this->assertNull(HubspotContact::contactIdForUser(1));
             $this->assertSame(409, HubspotSyncLog::query()->firstOrFail()->status_code);
         }
     }
@@ -361,7 +361,7 @@ class SyncContactJobTest extends TestCase
         Http::assertSent(fn ($r) => $r->method() === 'POST');
 
         $this->assertSame('hs-002', HubspotSyncLog::query()->firstOrFail()->hubspot_contact_id);
-        $this->assertSame('hs-002', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-002', HubspotContact::contactIdForUser(1));
     }
 
     public function test_update_patches_when_the_model_is_linked(): void
@@ -391,7 +391,7 @@ class SyncContactJobTest extends TestCase
         Http::assertSent(fn ($r) => $r->method() === 'POST');
         Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
 
-        $this->assertSame('hs-002', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-002', HubspotContact::contactIdForUser(1));
         $this->assertSame(1, HubspotContact::count());
     }
 
@@ -406,7 +406,7 @@ class SyncContactJobTest extends TestCase
         try {
             $this->runJob('create');
         } finally {
-            $this->assertNull(HubspotContact::contactIdFor(1));
+            $this->assertNull(HubspotContact::contactIdForUser(1));
             $this->assertSame(0, HubspotContact::count());
         }
     }
@@ -428,7 +428,7 @@ class SyncContactJobTest extends TestCase
         $this->assertSame(204, $log->status_code);
         $this->assertSame('hs-001', $log->hubspot_contact_id);
 
-        $this->assertNull(HubspotContact::contactIdFor(1));
+        $this->assertNull(HubspotContact::contactIdForUser(1));
         $this->assertNotNull(HubspotContact::query()->firstOrFail()->archived_at);
     }
 
@@ -521,7 +521,7 @@ class SyncContactJobTest extends TestCase
         $this->runJob('create');
 
         Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), 'hs-900'));
-        $this->assertSame('hs-900', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-900', HubspotContact::contactIdForUser(1));
     }
 
     public function test_an_email_is_trimmed_before_being_looked_up(): void

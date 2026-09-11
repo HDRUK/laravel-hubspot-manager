@@ -52,7 +52,7 @@ class HubspotContactBackfillTest extends TestCase
 
         $this->backfill();
 
-        $this->assertSame('hs-001', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-001', HubspotContact::contactIdForUser(1));
     }
 
     public function test_the_most_recent_successful_sync_wins(): void
@@ -62,7 +62,7 @@ class HubspotContactBackfillTest extends TestCase
 
         $this->backfill();
 
-        $this->assertSame('hs-002', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-002', HubspotContact::contactIdForUser(1));
         $this->assertSame(1, HubspotContact::count());
     }
 
@@ -73,7 +73,7 @@ class HubspotContactBackfillTest extends TestCase
 
         $this->backfill();
 
-        $this->assertSame('hs-newer', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-newer', HubspotContact::contactIdForUser(1));
     }
 
     public function test_failed_syncs_are_ignored(): void
@@ -83,7 +83,7 @@ class HubspotContactBackfillTest extends TestCase
 
         $this->backfill();
 
-        $this->assertSame('hs-001', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-001', HubspotContact::contactIdForUser(1));
     }
 
     public function test_a_model_with_no_successful_sync_is_not_linked(): void
@@ -107,7 +107,7 @@ class HubspotContactBackfillTest extends TestCase
 
         $this->backfill();
 
-        $this->assertNull(HubspotContact::contactIdFor(1));
+        $this->assertNull(HubspotContact::contactIdForUser(1));
 
         $row = HubspotContact::where('user_id', 1)->firstOrFail();
         $this->assertSame('hs-001', $row->hubspot_contact_id);
@@ -122,9 +122,9 @@ class HubspotContactBackfillTest extends TestCase
 
         $this->backfill();
 
-        $this->assertSame('hs-001', HubspotContact::contactIdFor(1));
-        $this->assertSame('hs-002', HubspotContact::contactIdFor(2));
-        $this->assertNull(HubspotContact::contactIdFor(3));
+        $this->assertSame('hs-001', HubspotContact::contactIdForUser(1));
+        $this->assertSame('hs-002', HubspotContact::contactIdForUser(2));
+        $this->assertNull(HubspotContact::contactIdForUser(3));
         $this->assertSame(2, HubspotContact::count());
     }
 

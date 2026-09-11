@@ -17,45 +17,45 @@ class HubspotContactTest extends TestCase
 
     public function test_an_unknown_model_resolves_to_null(): void
     {
-        $this->assertNull(HubspotContact::contactIdFor(1));
+        $this->assertNull(HubspotContact::contactIdForUser(1));
     }
 
     public function test_a_linked_model_resolves_to_its_contact(): void
     {
-        HubspotContact::link(1, 'hs-001');
+        HubspotContact::linkToUser(1, 'hs-001');
 
-        $this->assertSame('hs-001', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-001', HubspotContact::contactIdForUser(1));
     }
 
     public function test_models_are_linked_independently(): void
     {
-        HubspotContact::link(1, 'hs-001');
-        HubspotContact::link(2, 'hs-002');
+        HubspotContact::linkToUser(1, 'hs-001');
+        HubspotContact::linkToUser(2, 'hs-002');
 
-        $this->assertSame('hs-001', HubspotContact::contactIdFor(1));
-        $this->assertSame('hs-002', HubspotContact::contactIdFor(2));
+        $this->assertSame('hs-001', HubspotContact::contactIdForUser(1));
+        $this->assertSame('hs-002', HubspotContact::contactIdForUser(2));
     }
 
     public function test_relinking_replaces_the_contact_without_adding_a_row(): void
     {
-        HubspotContact::link(1, 'hs-001');
-        HubspotContact::link(1, 'hs-002');
+        HubspotContact::linkToUser(1, 'hs-001');
+        HubspotContact::linkToUser(1, 'hs-002');
 
-        $this->assertSame('hs-002', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-002', HubspotContact::contactIdForUser(1));
         $this->assertSame(1, HubspotContact::where('user_id', 1)->count());
     }
 
     public function test_an_archived_model_no_longer_resolves(): void
     {
-        HubspotContact::link(1, 'hs-001');
+        HubspotContact::linkToUser(1, 'hs-001');
         HubspotContact::archive(1);
 
-        $this->assertNull(HubspotContact::contactIdFor(1));
+        $this->assertNull(HubspotContact::contactIdForUser(1));
     }
 
     public function test_archiving_keeps_the_contact_id_visible(): void
     {
-        HubspotContact::link(1, 'hs-001');
+        HubspotContact::linkToUser(1, 'hs-001');
         HubspotContact::archive(1);
 
         $row = HubspotContact::where('user_id', 1)->firstOrFail();
@@ -65,11 +65,11 @@ class HubspotContactTest extends TestCase
 
     public function test_relinking_after_an_archive_makes_the_model_live_again(): void
     {
-        HubspotContact::link(1, 'hs-001');
+        HubspotContact::linkToUser(1, 'hs-001');
         HubspotContact::archive(1);
-        HubspotContact::link(1, 'hs-002');
+        HubspotContact::linkToUser(1, 'hs-002');
 
-        $this->assertSame('hs-002', HubspotContact::contactIdFor(1));
+        $this->assertSame('hs-002', HubspotContact::contactIdForUser(1));
         $this->assertNull(HubspotContact::where('user_id', 1)->firstOrFail()->archived_at);
         $this->assertSame(1, HubspotContact::where('user_id', 1)->count());
     }
