@@ -5,6 +5,7 @@ namespace Hdruk\LaravelHubspotManager\Tests\Unit;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
+use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
@@ -56,22 +57,24 @@ class SyncContactJobTest extends TestCase
         return $model;
     }
 
-    private function seedLog(array $attributes = []): void
-    {
-        HubspotSyncLog::insert(array_merge([
-            'user_id'            => 1,
-            'action'             => 'create',
-            'status_code'        => 201,
-            'hubspot_contact_id' => 'hs-001',
-            'error'              => null,
-            'created_at'         => '2026-01-01 00:00:00',
-            'updated_at'         => '2026-01-01 00:00:00',
-        ], $attributes));
-    }
-
     private function hubspot(): Hubspot
     {
         return new Hubspot();
+    }
+
+    private function seedLink(string $contactId = 'hs-001', ?string $archivedAt = null, int $userId = 1): void
+    {
+        HubspotContact::create([
+            'user_id'            => $userId,
+            'hubspot_contact_id' => $contactId,
+            'archived_at'        => $archivedAt,
+        ]);
+    }
+
+    private function runJob(string $action, ?object $model = null): void
+    {
+        $job = new SyncContactToHubspot($model ?? $this->fakeModel(), $action);
+        $job->handle($this->hubspot());
     }
 
     public function test_create_posts_new_contact_and_writes_sync_log(): void
@@ -80,8 +83,7 @@ class SyncContactJobTest extends TestCase
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
         ]);
 
-        $job = new SyncContactToHubspot($this->fakeModel(), 'create');
-        $job->handle($this->hubspot());
+        $this->runJob('create');
 
         $log = HubspotSyncLog::first();
         $this->assertNotNull($log);
@@ -92,21 +94,27 @@ class SyncContactJobTest extends TestCase
         $this->assertNull($log->error);
     }
 
-    public function test_create_upserts_when_contact_id_already_in_log(): void
+    public function test_create_links_the_model_to_the_new_contact(): void
     {
-        HubspotSyncLog::create([
-            'user_id'            => 1,
-            'action'             => 'create',
-            'status_code'        => 201,
-            'hubspot_contact_id' => 'hs-001',
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
         ]);
+
+        $this->runJob('create');
+
+        $this->assertSame('hs-001', HubspotContact::contactIdFor(1));
+        $this->assertSame(1, HubspotContact::count());
+    }
+
+    public function test_create_upserts_when_the_model_is_already_linked(): void
+    {
+        $this->seedLink('hs-001');
 
         Http::fake([
             'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
         ]);
 
-        $job = new SyncContactToHubspot($this->fakeModel(), 'create');
-        $job->handle($this->hubspot());
+        $this->runJob('create');
 
         Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), 'hs-001'));
 
@@ -115,55 +123,76 @@ class SyncContactJobTest extends TestCase
         $this->assertSame('hs-001', $log->hubspot_contact_id);
     }
 
-    public function test_update_creates_contact_when_no_existing_log(): void
+    public function test_update_creates_contact_when_the_model_is_unlinked(): void
     {
         Http::fake([
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-002'], 201),
         ]);
 
-        $job = new SyncContactToHubspot($this->fakeModel(), 'update');
-        $job->handle($this->hubspot());
+        $this->runJob('update');
 
         Http::assertSent(fn ($r) => $r->method() === 'POST');
 
-        $log = HubspotSyncLog::first();
-        $this->assertSame('hs-002', $log->hubspot_contact_id);
+        $this->assertSame('hs-002', HubspotSyncLog::first()->hubspot_contact_id);
+        $this->assertSame('hs-002', HubspotContact::contactIdFor(1));
     }
 
-    public function test_update_patches_when_contact_id_exists(): void
+    public function test_update_patches_when_the_model_is_linked(): void
     {
-        HubspotSyncLog::create([
-            'user_id'            => 1,
-            'action'             => 'create',
-            'status_code'        => 201,
-            'hubspot_contact_id' => 'hs-001',
-        ]);
+        $this->seedLink('hs-001');
 
         Http::fake([
             'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
         ]);
 
-        $job = new SyncContactToHubspot($this->fakeModel(), 'update');
-        $job->handle($this->hubspot());
+        $this->runJob('update');
 
         Http::assertSent(fn ($r) => $r->method() === 'PATCH');
     }
 
-    public function test_delete_archives_contact_when_id_exists(): void
+    public function test_update_creates_a_new_contact_after_a_successful_delete(): void
     {
-        HubspotSyncLog::create([
-            'user_id'            => 1,
-            'action'             => 'create',
-            'status_code'        => 201,
-            'hubspot_contact_id' => 'hs-001',
+        $this->seedLink('hs-001', archivedAt: '2026-01-01 00:00:00');
+
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response(['id' => 'hs-001'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts'   => Http::response(['id' => 'hs-002'], 201),
         ]);
+
+        $this->runJob('update');
+
+        Http::assertSent(fn ($r) => $r->method() === 'POST');
+        Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
+
+        $this->assertSame('hs-002', HubspotContact::contactIdFor(1));
+        $this->assertSame(1, HubspotContact::count());
+    }
+
+    public function test_failed_create_leaves_the_model_unlinked(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['message' => 'Invalid email'], 400),
+        ]);
+
+        $this->expectException(HubspotApiException::class);
+
+        try {
+            $this->runJob('create');
+        } finally {
+            $this->assertNull(HubspotContact::contactIdFor(1));
+            $this->assertSame(0, HubspotContact::count());
+        }
+    }
+
+    public function test_delete_archives_contact_when_the_model_is_linked(): void
+    {
+        $this->seedLink('hs-001');
 
         Http::fake([
             'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(null, 204),
         ]);
 
-        $job = new SyncContactToHubspot($this->fakeModel(), 'delete');
-        $job->handle($this->hubspot());
+        $this->runJob('delete');
 
         Http::assertSent(fn ($r) => $r->method() === 'DELETE' && str_contains($r->url(), 'hs-001'));
 
@@ -171,14 +200,27 @@ class SyncContactJobTest extends TestCase
         $this->assertSame('delete', $log->action);
         $this->assertSame(204, $log->status_code);
         $this->assertSame('hs-001', $log->hubspot_contact_id);
+
+        $this->assertNull(HubspotContact::contactIdFor(1));
+        $this->assertNotNull(HubspotContact::first()->archived_at);
     }
 
-    public function test_delete_skips_api_when_no_contact_id(): void
+    public function test_delete_skips_api_when_the_model_was_never_linked(): void
     {
         Http::fake();
 
-        $job = new SyncContactToHubspot($this->fakeModel(), 'delete');
-        $job->handle($this->hubspot());
+        $this->runJob('delete');
+
+        Http::assertNothingSent();
+    }
+
+    public function test_delete_skips_api_when_the_contact_is_already_archived(): void
+    {
+        $this->seedLink('hs-001', archivedAt: '2026-01-01 00:00:00');
+
+        Http::fake();
+
+        $this->runJob('delete');
 
         Http::assertNothingSent();
     }
@@ -188,11 +230,11 @@ class SyncContactJobTest extends TestCase
         config(['hubspotmanager.default.enabled' => false]);
         Http::fake();
 
-        $job = new SyncContactToHubspot($this->fakeModel(), 'create');
-        $job->handle($this->hubspot());
+        $this->runJob('create');
 
         Http::assertNothingSent();
         $this->assertSame(0, HubspotSyncLog::count());
+        $this->assertSame(0, HubspotContact::count());
     }
 
     public function test_fires_hubspot_contact_synced_event(): void
@@ -203,9 +245,7 @@ class SyncContactJobTest extends TestCase
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
         ]);
 
-        $model = $this->fakeModel();
-        $job = new SyncContactToHubspot($model, 'create');
-        $job->handle($this->hubspot());
+        $this->runJob('create');
 
         Event::assertDispatched(HubspotContactSynced::class, function (HubspotContactSynced $e) {
             return $e->action === 'create'
@@ -222,12 +262,10 @@ class SyncContactJobTest extends TestCase
             ], 400),
         ]);
 
-        $job = new SyncContactToHubspot($this->fakeModel(), 'create');
-
         $this->expectException(HubspotApiException::class);
 
         try {
-            $job->handle($this->hubspot());
+            $this->runJob('create');
         } finally {
             $log = HubspotSyncLog::first();
             $this->assertNotNull($log);
@@ -245,74 +283,8 @@ class SyncContactJobTest extends TestCase
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
         ]);
 
-        $job = new SyncContactToHubspot($this->fakeModel(), 'create');
-        $job->handle($this->hubspot());
+        $this->runJob('create');
 
         Http::assertSent(fn ($r) => ($r->data()['properties']['product_name'] ?? null) === 'TestApp');
-    }
-
-    public function test_update_creates_a_new_contact_after_a_successful_delete(): void
-    {
-        $this->seedLog(['action' => 'create', 'status_code' => 201, 'hubspot_contact_id' => 'hs-001']);
-        $this->seedLog(['action' => 'delete', 'status_code' => 204, 'hubspot_contact_id' => 'hs-001']);
-
-        Http::fake([
-            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response(['id' => 'hs-001'], 200),
-            'https://api.hubapi.com/crm/v3/objects/contacts'   => Http::response(['id' => 'hs-002'], 201),
-        ]);
-
-        $job = new SyncContactToHubspot($this->fakeModel(), 'update');
-        $job->handle($this->hubspot());
-
-        Http::assertSent(fn ($r) => $r->method() === 'POST');
-        Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
-
-        $this->assertSame('hs-002', HubspotSyncLog::orderBy('id', 'desc')->first()->hubspot_contact_id);
-    }
-
-    public function test_delete_skips_api_when_the_contact_is_already_archived(): void
-    {
-        $this->seedLog(['action' => 'create', 'status_code' => 201, 'hubspot_contact_id' => 'hs-001']);
-        $this->seedLog(['action' => 'delete', 'status_code' => 204, 'hubspot_contact_id' => 'hs-001']);
-
-        Http::fake();
-
-        $job = new SyncContactToHubspot($this->fakeModel(), 'delete');
-        $job->handle($this->hubspot());
-
-        Http::assertNothingSent();
-    }
-
-    public function test_resolution_ignores_contact_ids_recorded_by_failed_syncs(): void
-    {
-        $this->seedLog(['action' => 'update', 'status_code' => 500, 'hubspot_contact_id' => 'hs-failed']);
-
-        Http::fake([
-            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response(['id' => 'hs-failed'], 200),
-            'https://api.hubapi.com/crm/v3/objects/contacts'   => Http::response(['id' => 'hs-003'], 201),
-        ]);
-
-        $job = new SyncContactToHubspot($this->fakeModel(), 'update');
-        $job->handle($this->hubspot());
-
-        Http::assertSent(fn ($r) => $r->method() === 'POST');
-        Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
-    }
-
-    public function test_resolution_is_deterministic_when_log_timestamps_tie(): void
-    {
-        $this->seedLog(['hubspot_contact_id' => 'hs-older']);
-        $this->seedLog(['hubspot_contact_id' => 'hs-newer']);
-
-        Http::fake([
-            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response(['id' => 'hs-newer'], 200),
-        ]);
-
-        $job = new SyncContactToHubspot($this->fakeModel(), 'update');
-        $job->handle($this->hubspot());
-
-        Http::assertSent(
-            fn ($r) => $r->method() === 'PATCH' && str_ends_with($r->url(), '/contacts/hs-newer')
-        );
     }
 }

@@ -10,6 +10,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
+use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 
@@ -75,25 +76,22 @@ class SyncContactToHubspot implements ShouldQueue
 
     private function handleCreate(Hubspot $hubspot): array
     {
-        $existingContactId = $this->resolveHubspotContactId();
+        $existingContactId = HubspotContact::contactIdFor($this->model->getKey());
 
-        if ($existingContactId) {
+        if ($existingContactId !== null) {
             $hubspot->updateContact($existingContactId, $this->properties());
             return [$existingContactId, 200];
         }
 
-        $response = $hubspot->createContact($this->properties());
-
-        return [$response['id'] ?? null, 201];
+        return [$this->createAndLink($hubspot), 201];
     }
 
     private function handleUpdate(Hubspot $hubspot): array
     {
-        $contactId = $this->resolveHubspotContactId();
+        $contactId = HubspotContact::contactIdFor($this->model->getKey());
 
-        if (!$contactId) {
-            $response = $hubspot->createContact($this->properties());
-            return [$response['id'] ?? null, 201];
+        if ($contactId === null) {
+            return [$this->createAndLink($hubspot), 201];
         }
 
         $hubspot->updateContact($contactId, $this->properties());
@@ -103,15 +101,32 @@ class SyncContactToHubspot implements ShouldQueue
 
     private function handleDelete(Hubspot $hubspot): array
     {
-        $contactId = $this->resolveHubspotContactId();
+        $contactId = HubspotContact::contactIdFor($this->model->getKey());
 
         if ($contactId === null) {
             return [null, 204];
         }
 
         $hubspot->deleteContact($contactId);
+        HubspotContact::archive($this->model->getKey());
 
         return [$contactId, 204];
+    }
+
+    /**
+     * Linked only after HubSpot has confirmed the id, so a failed create
+     * leaves the model unlinked and the next sync retries it.
+     */
+    private function createAndLink(Hubspot $hubspot): ?string
+    {
+        $response = $hubspot->createContact($this->properties());
+        $contactId = $response['id'] ?? null;
+
+        if ($contactId !== null) {
+            HubspotContact::link($this->model->getKey(), (string) $contactId);
+        }
+
+        return $contactId;
     }
 
     private function properties(): array
@@ -123,30 +138,5 @@ class SyncContactToHubspot implements ShouldQueue
         }
 
         return $properties;
-    }
-
-    /**
-     * The HubSpot contact this model is currently linked to, or null when no
-     * live link exists.
-     *
-     * Only a successful sync establishes a link, and a successful delete
-     * severs it. Ordered by primary key rather than created_at, because rows
-     * can share a created_at value and their relative order within a second
-     * is not deterministic.
-     */
-    private function resolveHubspotContactId(): ?string
-    {
-        $latest = HubspotSyncLog::query()
-            ->where('user_id', $this->model->getKey())
-            ->whereNotNull('hubspot_contact_id')
-            ->successful()
-            ->latest('id')
-            ->first();
-
-        if ($latest === null || $latest->action === 'delete') {
-            return null;
-        }
-
-        return $latest->hubspot_contact_id;
     }
 }
