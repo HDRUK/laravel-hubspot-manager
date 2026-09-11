@@ -105,11 +105,13 @@ class SyncContactToHubspot implements ShouldQueue
     {
         $contactId = $this->resolveHubspotContactId();
 
-        if ($contactId) {
-            $hubspot->deleteContact($contactId);
+        if ($contactId === null) {
+            return [null, 204];
         }
 
-        return [null, 204];
+        $hubspot->deleteContact($contactId);
+
+        return [$contactId, 204];
     }
 
     private function properties(): array
@@ -123,11 +125,28 @@ class SyncContactToHubspot implements ShouldQueue
         return $properties;
     }
 
+    /**
+     * The HubSpot contact this model is currently linked to, or null when no
+     * live link exists.
+     *
+     * Only a successful sync establishes a link, and a successful delete
+     * severs it. Ordered by primary key rather than created_at, because rows
+     * can share a created_at value and their relative order within a second
+     * is not deterministic.
+     */
     private function resolveHubspotContactId(): ?string
     {
-        return HubspotSyncLog::where('user_id', $this->model->getKey())
+        $latest = HubspotSyncLog::query()
+            ->where('user_id', $this->model->getKey())
             ->whereNotNull('hubspot_contact_id')
-            ->latest()
-            ->value('hubspot_contact_id');
+            ->successful()
+            ->latest('id')
+            ->first();
+
+        if ($latest === null || $latest->action === 'delete') {
+            return null;
+        }
+
+        return $latest->hubspot_contact_id;
     }
 }
