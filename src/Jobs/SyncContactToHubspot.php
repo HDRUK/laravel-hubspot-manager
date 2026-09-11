@@ -5,6 +5,7 @@ namespace Hdruk\LaravelHubspotManager\Jobs;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\Response;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
@@ -99,7 +100,7 @@ class SyncContactToHubspot implements ShouldQueue
 
         if ($existingContactId !== null) {
             $hubspot->updateContact($existingContactId, $this->properties());
-            return new SyncOutcome($existingContactId, 200, SyncOutcome::VIA_LINK);
+            return new SyncOutcome($existingContactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
         }
 
         return $this->adoptOrCreate($hubspot);
@@ -115,7 +116,7 @@ class SyncContactToHubspot implements ShouldQueue
 
         $hubspot->updateContact($contactId, $this->properties());
 
-        return new SyncOutcome($contactId, 200, SyncOutcome::VIA_LINK);
+        return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
     }
 
     private function handleDelete(Hubspot $hubspot): SyncOutcome
@@ -123,13 +124,13 @@ class SyncContactToHubspot implements ShouldQueue
         $contactId = HubspotContact::contactIdForUser($this->model->getKey());
 
         if ($contactId === null) {
-            return new SyncOutcome(null, 204);
+            return new SyncOutcome(null, Response::HTTP_NO_CONTENT);
         }
 
         $hubspot->deleteContact($contactId);
         HubspotContact::archive($this->model->getKey());
 
-        return new SyncOutcome($contactId, 204, SyncOutcome::VIA_LINK);
+        return new SyncOutcome($contactId, Response::HTTP_NO_CONTENT, SyncOutcome::VIA_LINK);
     }
 
     /**
@@ -149,7 +150,7 @@ class SyncContactToHubspot implements ShouldQueue
         $hubspot->updateContact($contactId, $this->properties());
         HubspotContact::linkToUser($this->model->getKey(), $contactId);
 
-        return new SyncOutcome($contactId, 200, SyncOutcome::VIA_LOOKUP);
+        return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LOOKUP);
     }
 
     /**
@@ -191,7 +192,7 @@ class SyncContactToHubspot implements ShouldQueue
             HubspotContact::linkToUser($this->model->getKey(), (string) $contactId);
         }
 
-        return new SyncOutcome(is_scalar($contactId) ? (string) $contactId : null, 201, SyncOutcome::VIA_CREATED);
+        return new SyncOutcome(is_scalar($contactId) ? (string) $contactId : null, Response::HTTP_CREATED, SyncOutcome::VIA_CREATED);
     }
 
     /**
@@ -215,7 +216,7 @@ class SyncContactToHubspot implements ShouldQueue
         $hubspot->updateContact($contactId, $this->properties());
         HubspotContact::linkToUser($this->model->getKey(), $contactId);
 
-        return new SyncOutcome($contactId, 200, SyncOutcome::VIA_CONFLICT);
+        return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_CONFLICT);
     }
 
     /**

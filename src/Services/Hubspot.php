@@ -3,6 +3,7 @@
 namespace Hdruk\LaravelHubspotManager\Services;
 
 use Illuminate\Http\Client\Response;
+use Illuminate\Http\Response as HttpStatus;
 use Illuminate\Support\Facades\Http;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
@@ -96,7 +97,7 @@ class Hubspot
                 'archived'   => 'false',
             ]);
 
-        if ($response->status() === 404) {
+        if ($response->status() === HttpStatus::HTTP_NOT_FOUND) {
             return null;
         }
 

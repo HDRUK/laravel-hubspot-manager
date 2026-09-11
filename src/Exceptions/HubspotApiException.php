@@ -3,6 +3,7 @@
 namespace Hdruk\LaravelHubspotManager\Exceptions;
 
 use Illuminate\Http\Client\Response;
+use Illuminate\Http\Response as HttpStatus;
 use RuntimeException;
 
 class HubspotApiException extends RuntimeException
@@ -25,7 +26,7 @@ class HubspotApiException extends RuntimeException
      */
     public function isConflict(): bool
     {
-        return $this->statusCode === 409
+        return $this->statusCode === HttpStatus::HTTP_CONFLICT
             || ($this->response['category'] ?? null) === 'CONFLICT';
     }
 
