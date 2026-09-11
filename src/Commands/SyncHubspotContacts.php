@@ -3,6 +3,7 @@
 namespace Hdruk\LaravelHubspotManager\Commands;
 
 use Illuminate\Console\Command;
+use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 
 class SyncHubspotContacts extends Command
@@ -21,9 +22,10 @@ class SyncHubspotContacts extends Command
         /** @var class-string<\Illuminate\Database\Eloquent\Model> $modelClass */
         $modelClass = config('hubspotmanager.default.models.users');
 
-        if ($id = $this->option('user')) {
-            $model = $modelClass::findOrFail($id);
-            SyncContactToHubspot::dispatch($model, 'create');
+        $id = $this->option('user');
+
+        if (is_string($id) && $id !== '') {
+            SyncContactToHubspot::dispatch($modelClass::query()->findOrFail($id), HubspotAction::Create);
             $this->info("Dispatched sync for {$modelClass} #{$id}.");
             return Command::SUCCESS;
         }
@@ -32,7 +34,7 @@ class SyncHubspotContacts extends Command
 
         $modelClass::chunk(200, function ($models) use (&$count) {
             foreach ($models as $model) {
-                SyncContactToHubspot::dispatch($model, 'create');
+                SyncContactToHubspot::dispatch($model, HubspotAction::Create);
                 $count++;
             }
         });
