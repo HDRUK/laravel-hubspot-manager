@@ -2,6 +2,7 @@
 
 namespace Hdruk\LaravelHubspotManager\Tests\Unit;
 
+use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
@@ -107,7 +108,7 @@ class SyncContactJobTest extends TestCase
 
     private function runJob(string $action, ?Model $model = null): void
     {
-        $job = new SyncContactToHubspot($model ?? $this->fakeModel(), $action);
+        $job = new SyncContactToHubspot($model ?? $this->fakeModel(), HubspotAction::from($action));
         $job->handle($this->hubspot());
     }
 
@@ -507,7 +508,7 @@ class SyncContactJobTest extends TestCase
         $this->expectException(HubspotConfigurationException::class);
         $this->expectExceptionMessageMatches('/toHubspotProperties/');
 
-        new SyncContactToHubspot($model, 'create');
+        new SyncContactToHubspot($model, HubspotAction::Create);
     }
 
     public function test_a_model_using_only_the_trait_is_adopted_by_lookup(): void

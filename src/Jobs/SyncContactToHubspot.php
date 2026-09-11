@@ -8,13 +8,13 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
-use InvalidArgumentException;
 
 class SyncContactToHubspot implements ShouldQueue
 {
@@ -22,11 +22,9 @@ class SyncContactToHubspot implements ShouldQueue
 
     public int $tries = 3;
 
-    public const ACTIONS = ['create', 'update', 'delete'];
-
     public function __construct(
         public readonly Model $model,
-        public readonly string $action,
+        public readonly HubspotAction $action,
     ) {
         // Checked here rather than by the type, so that a model which cannot
         // be synced fails where it is dispatched rather than part way through
@@ -34,10 +32,6 @@ class SyncContactToHubspot implements ShouldQueue
         // interface to say so.
         if (!method_exists($model, 'toHubspotProperties')) {
             throw HubspotConfigurationException::notContactable($model::class);
-        }
-
-        if (!in_array($action, self::ACTIONS, true)) {
-            throw new InvalidArgumentException("Unknown HubSpot sync action [{$action}].");
         }
     }
 
@@ -60,10 +54,9 @@ class SyncContactToHubspot implements ShouldQueue
 
         try {
             $outcome = match ($this->action) {
-                'create' => $this->handleCreate($hubspot),
-                'update' => $this->handleUpdate($hubspot),
-                'delete' => $this->handleDelete($hubspot),
-                default  => throw new InvalidArgumentException("Unknown HubSpot sync action [{$this->action}]."),
+                HubspotAction::Create => $this->handleCreate($hubspot),
+                HubspotAction::Update => $this->handleUpdate($hubspot),
+                HubspotAction::Delete => $this->handleDelete($hubspot),
             };
         } catch (HubspotApiException $e) {
             $outcome = new SyncOutcome(null, $e->statusCode);
@@ -72,7 +65,7 @@ class SyncContactToHubspot implements ShouldQueue
         } finally {
             HubspotSyncLog::create([
                 'user_id'            => $this->model->getKey(),
-                'action'             => $this->action,
+                'action'             => $this->action->value,
                 'status_code'        => $outcome->statusCode,
                 'hubspot_contact_id' => $outcome->contactId,
                 'resolved_via'       => $outcome->resolvedVia,
@@ -81,7 +74,7 @@ class SyncContactToHubspot implements ShouldQueue
 
             event(new HubspotContactSynced(
                 $this->model,
-                $this->action,
+                $this->action->value,
                 $outcome->statusCode,
                 $outcome->contactId,
                 $outcome->resolvedVia,
@@ -93,7 +86,7 @@ class SyncContactToHubspot implements ShouldQueue
     {
         HubspotSyncLog::create([
             'user_id'            => $this->model->getKey(),
-            'action'             => $this->action,
+            'action'             => $this->action->value,
             'status_code'        => $exception instanceof HubspotApiException ? $exception->statusCode : 0,
             'hubspot_contact_id' => null,
             'error'              => 'All retries exhausted: ' . $exception->getMessage(),

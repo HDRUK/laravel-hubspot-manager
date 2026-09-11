@@ -2,6 +2,7 @@
 
 namespace Hdruk\LaravelHubspotManager\Traits;
 
+use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -10,9 +11,9 @@ trait HasHubspotContact
 {
     public static function bootHasHubspotContact(): void
     {
-        static::created(fn ($model) => SyncContactToHubspot::dispatch($model, 'create'));
-        static::updated(fn ($model) => SyncContactToHubspot::dispatch($model, 'update'));
-        static::deleted(fn ($model) => SyncContactToHubspot::dispatch($model, 'delete'));
+        static::created(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Create));
+        static::updated(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Update));
+        static::deleted(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Delete));
     }
 
     /**
