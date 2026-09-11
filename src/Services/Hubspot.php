@@ -11,6 +11,7 @@ class Hubspot
 {
     protected string $baseUrl;
     protected string $contactsEndpoint;
+    /** @var array<string, string> */
     protected array $headers;
 
     public function __construct()
@@ -26,6 +27,10 @@ class Hubspot
         ];
     }
 
+    /**
+     * @param  array<string, mixed>  $properties
+     * @return array<string, mixed>
+     */
     public function createContact(array $properties): array
     {
         $response = Http::withHeaders($this->headers)
@@ -38,6 +43,10 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * @param  list<string>  $properties
+     * @return array<string, mixed>
+     */
     public function getContact(string $contactId, array $properties = []): array
     {
         $query = $properties ? ['properties' => implode(',', $properties)] : [];
@@ -50,6 +59,10 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * @param  array<string, mixed>  $properties
+     * @return array<string, mixed>
+     */
     public function updateContact(string $contactId, array $properties): array
     {
         $response = Http::withHeaders($this->headers)
@@ -72,6 +85,10 @@ class Hubspot
         return true;
     }
 
+    /**
+     * @param  list<array<string, mixed>>  $contacts
+     * @return array<string, mixed>
+     */
     public function createContacts(array $contacts): array
     {
         $inputs = array_map(fn (array $props) => ['properties' => $props], $contacts);
@@ -86,6 +103,10 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * @param  list<array{id: string, properties: array<string, mixed>}>  $contacts
+     * @return array<string, mixed>
+     */
     public function updateContacts(array $contacts): array
     {
         $response = Http::withHeaders($this->headers)
@@ -98,6 +119,9 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * @param  list<string>  $contactIds
+     */
     public function deleteContacts(array $contactIds): bool
     {
         $inputs = array_map(fn (string $id) => ['id' => $id], $contactIds);
@@ -112,6 +136,11 @@ class Hubspot
         return true;
     }
 
+    /**
+     * @param  list<array{propertyName: string, operator: string, value?: mixed}>  $filters
+     * @param  list<string>  $properties
+     * @return array<string, mixed>
+     */
     public function searchContacts(array $filters, array $properties = []): array
     {
         $payload = ['filterGroups' => [['filters' => $filters]]];

@@ -9,6 +9,9 @@ use Illuminate\Support\Facades\Http;
 
 class HubspotServiceTest extends TestCase
 {
+    /**
+     * @return array<string, mixed>
+     */
     private function validConfig(): array
     {
         return [

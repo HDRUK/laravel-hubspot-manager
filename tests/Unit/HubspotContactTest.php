@@ -58,7 +58,7 @@ class HubspotContactTest extends TestCase
         HubspotContact::link(1, 'hs-001');
         HubspotContact::archive(1);
 
-        $row = HubspotContact::where('user_id', 1)->first();
+        $row = HubspotContact::where('user_id', 1)->firstOrFail();
         $this->assertSame('hs-001', $row->hubspot_contact_id);
         $this->assertNotNull($row->archived_at);
     }
@@ -70,7 +70,7 @@ class HubspotContactTest extends TestCase
         HubspotContact::link(1, 'hs-002');
 
         $this->assertSame('hs-002', HubspotContact::contactIdFor(1));
-        $this->assertNull(HubspotContact::where('user_id', 1)->first()->archived_at);
+        $this->assertNull(HubspotContact::where('user_id', 1)->firstOrFail()->archived_at);
         $this->assertSame(1, HubspotContact::where('user_id', 1)->count());
     }
 

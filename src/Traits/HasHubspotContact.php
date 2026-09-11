@@ -18,6 +18,8 @@ trait HasHubspotContact
     /**
      * Map model attributes to HubSpot contact properties.
      * Override this method in your model to customise the mapping.
+     *
+     * @return array<string, mixed>
      */
     public function toHubspotProperties(): array
     {
@@ -60,6 +62,9 @@ trait HasHubspotContact
         return $value === '' ? null : $value;
     }
 
+    /**
+     * @return HasMany<HubspotSyncLog, $this>
+     */
     public function hubspotSyncLogs(): HasMany
     {
         return $this->hasMany(HubspotSyncLog::class, 'user_id');

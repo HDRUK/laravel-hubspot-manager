@@ -13,15 +13,24 @@ use Illuminate\Database\Eloquent\Model;
  * contactIdFor(), link() and archive() are the intended way to read and
  * change a link; each is a single statement, so concurrent queue workers
  * cannot interleave a read and a write and lose one of them.
+ *
+ * @property int $id
+ * @property int $user_id
+ * @property string $hubspot_contact_id
+ * @property \Illuminate\Support\Carbon|null $archived_at
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
  */
 class HubspotContact extends Model
 {
+    /** @var list<string> */
     protected $fillable = [
         'user_id',
         'hubspot_contact_id',
         'archived_at',
     ];
 
+    /** @var array<string, string> */
     protected $casts = [
         'archived_at' => 'datetime',
     ];

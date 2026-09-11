@@ -44,5 +44,8 @@ jobs:
       - name: Dump autoload
         run: composer dump-autoload
 
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+
       - name: Run PHPUnit
         run: vendor/bin/phpunit --colors=always

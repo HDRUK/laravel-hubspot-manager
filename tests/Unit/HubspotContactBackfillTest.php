@@ -22,6 +22,9 @@ class HubspotContactBackfillTest extends TestCase
         $this->loadMigrationsFrom(__DIR__ . '/../../src/database/migrations');
     }
 
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
     private function seedLog(array $attributes = []): void
     {
         HubspotSyncLog::insert(array_merge([
@@ -106,9 +109,9 @@ class HubspotContactBackfillTest extends TestCase
 
         $this->assertNull(HubspotContact::contactIdFor(1));
 
-        $row = HubspotContact::where('user_id', 1)->first();
+        $row = HubspotContact::where('user_id', 1)->firstOrFail();
         $this->assertSame('hs-001', $row->hubspot_contact_id);
-        $this->assertSame('2026-02-01', $row->archived_at->toDateString());
+        $this->assertSame('2026-02-01', $row->archived_at?->toDateString());
     }
 
     public function test_each_model_is_backfilled_independently(): void

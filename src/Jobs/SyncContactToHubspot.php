@@ -14,6 +14,7 @@ use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
+use InvalidArgumentException;
 
 class SyncContactToHubspot implements ShouldQueue
 {
@@ -21,11 +22,20 @@ class SyncContactToHubspot implements ShouldQueue
 
     public int $tries = 3;
 
+    public const ACTIONS = ['create', 'update', 'delete'];
+
     public function __construct(
         public readonly Model&HubspotContactable $model,
         public readonly string $action,
-    ) {}
+    ) {
+        if (!in_array($action, self::ACTIONS, true)) {
+            throw new InvalidArgumentException("Unknown HubSpot sync action [{$action}].");
+        }
+    }
 
+    /**
+     * @return list<int>
+     */
     public function backoff(): array
     {
         return [10, 60, 300];
@@ -46,6 +56,7 @@ class SyncContactToHubspot implements ShouldQueue
                 'create' => $this->handleCreate($hubspot),
                 'update' => $this->handleUpdate($hubspot),
                 'delete' => $this->handleDelete($hubspot),
+                default  => throw new InvalidArgumentException("Unknown HubSpot sync action [{$this->action}]."),
             };
         } catch (HubspotApiException $e) {
             $statusCode = $e->statusCode;
@@ -75,6 +86,9 @@ class SyncContactToHubspot implements ShouldQueue
         ]);
     }
 
+    /**
+     * @return array{0: string|null, 1: int}
+     */
     private function handleCreate(Hubspot $hubspot): array
     {
         $existingContactId = HubspotContact::contactIdFor($this->model->getKey());
@@ -87,6 +101,9 @@ class SyncContactToHubspot implements ShouldQueue
         return [$this->createAndLink($hubspot), 201];
     }
 
+    /**
+     * @return array{0: string|null, 1: int}
+     */
     private function handleUpdate(Hubspot $hubspot): array
     {
         $contactId = HubspotContact::contactIdFor($this->model->getKey());
@@ -100,6 +117,9 @@ class SyncContactToHubspot implements ShouldQueue
         return [$contactId, 200];
     }
 
+    /**
+     * @return array{0: string|null, 1: int}
+     */
     private function handleDelete(Hubspot $hubspot): array
     {
         $contactId = HubspotContact::contactIdFor($this->model->getKey());
@@ -130,6 +150,9 @@ class SyncContactToHubspot implements ShouldQueue
         return $contactId;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     private function properties(): array
     {
         $properties = $this->model->toHubspotProperties();

@@ -4,6 +4,7 @@ namespace Hdruk\LaravelHubspotManager\Tests\Unit;
 
 use Hdruk\LaravelHubspotManager\Contracts\HubspotContactable;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
+use Illuminate\Database\Eloquent\Model;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 
 /**
@@ -13,11 +14,15 @@ use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
  */
 class HubspotIdentityTest extends TestCase
 {
-    private function model(array $properties): object
+    /**
+     * @param  array<string, mixed>  $properties
+     */
+    private function model(array $properties): Model&HubspotContactable
     {
-        $model = new class extends \Illuminate\Database\Eloquent\Model implements HubspotContactable {
+        $model = new class extends Model implements HubspotContactable {
             use HasHubspotContact;
 
+            /** @var array<string, mixed> */
             public array $fakeProperties = [];
 
             public function toHubspotProperties(): array

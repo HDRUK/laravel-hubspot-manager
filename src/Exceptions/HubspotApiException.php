@@ -7,6 +7,9 @@ use RuntimeException;
 
 class HubspotApiException extends RuntimeException
 {
+    /**
+     * @param  array<string, mixed>  $response
+     */
     public function __construct(
         string $message,
         public readonly int $statusCode,

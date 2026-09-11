@@ -10,6 +10,7 @@ use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
+use Illuminate\Database\Eloquent\Model;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
@@ -36,12 +37,16 @@ class SyncContactJobTest extends TestCase
         ]);
     }
 
-    private function fakeModel(int $id = 1, array $properties = ['email' => 'jane@example.com']): object
+    /**
+     * @param  array<string, mixed>  $properties
+     */
+    private function fakeModel(int $id = 1, array $properties = ['email' => 'jane@example.com']): Model&HubspotContactable
     {
-        $model = new class extends \Illuminate\Database\Eloquent\Model implements HubspotContactable {
+        $model = new class extends Model implements HubspotContactable {
             use HasHubspotContact;
 
             public int $fakeId = 1;
+            /** @var array<string, mixed> */
             public array $fakeProperties = [];
 
             public function getKey(): mixed
@@ -75,7 +80,7 @@ class SyncContactJobTest extends TestCase
         ]);
     }
 
-    private function runJob(string $action, ?object $model = null): void
+    private function runJob(string $action, (Model&HubspotContactable)|null $model = null): void
     {
         $job = new SyncContactToHubspot($model ?? $this->fakeModel(), $action);
         $job->handle($this->hubspot());
@@ -89,8 +94,7 @@ class SyncContactJobTest extends TestCase
 
         $this->runJob('create');
 
-        $log = HubspotSyncLog::first();
-        $this->assertNotNull($log);
+        $log = HubspotSyncLog::query()->firstOrFail();
         $this->assertSame(1, $log->user_id);
         $this->assertSame('create', $log->action);
         $this->assertSame(201, $log->status_code);
@@ -122,7 +126,7 @@ class SyncContactJobTest extends TestCase
 
         Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), 'hs-001'));
 
-        $log = HubspotSyncLog::orderBy('id', 'desc')->first();
+        $log = HubspotSyncLog::orderBy('id', 'desc')->firstOrFail();
         $this->assertSame(200, $log->status_code);
         $this->assertSame('hs-001', $log->hubspot_contact_id);
     }
@@ -137,7 +141,7 @@ class SyncContactJobTest extends TestCase
 
         Http::assertSent(fn ($r) => $r->method() === 'POST');
 
-        $this->assertSame('hs-002', HubspotSyncLog::first()->hubspot_contact_id);
+        $this->assertSame('hs-002', HubspotSyncLog::query()->firstOrFail()->hubspot_contact_id);
         $this->assertSame('hs-002', HubspotContact::contactIdFor(1));
     }
 
@@ -200,13 +204,13 @@ class SyncContactJobTest extends TestCase
 
         Http::assertSent(fn ($r) => $r->method() === 'DELETE' && str_contains($r->url(), 'hs-001'));
 
-        $log = HubspotSyncLog::orderBy('id', 'desc')->first();
+        $log = HubspotSyncLog::orderBy('id', 'desc')->firstOrFail();
         $this->assertSame('delete', $log->action);
         $this->assertSame(204, $log->status_code);
         $this->assertSame('hs-001', $log->hubspot_contact_id);
 
         $this->assertNull(HubspotContact::contactIdFor(1));
-        $this->assertNotNull(HubspotContact::first()->archived_at);
+        $this->assertNotNull(HubspotContact::query()->firstOrFail()->archived_at);
     }
 
     public function test_delete_skips_api_when_the_model_was_never_linked(): void
@@ -271,8 +275,7 @@ class SyncContactJobTest extends TestCase
         try {
             $this->runJob('create');
         } finally {
-            $log = HubspotSyncLog::first();
-            $this->assertNotNull($log);
+            $log = HubspotSyncLog::query()->firstOrFail();
             $this->assertSame(400, $log->status_code);
             $this->assertSame('Invalid email', $log->error);
             $this->assertNull($log->hubspot_contact_id);
@@ -285,6 +288,10 @@ class SyncContactJobTest extends TestCase
 
         $this->expectException(\TypeError::class);
 
+        // PHPStan reports this call too, which is the point: the contract is
+        // enforced statically, and this test pins the runtime backstop for
+        // consumers who do not run static analysis.
+        // @phpstan-ignore argument.type
         new SyncContactToHubspot($model, 'create');
     }
 

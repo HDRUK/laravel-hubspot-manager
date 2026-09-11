@@ -17,6 +17,8 @@ interface HubspotContactable
     /**
      * Model attributes mapped to HubSpot contact properties, keyed by HubSpot
      * property name.
+     *
+     * @return array<string, mixed>
      */
     public function toHubspotProperties(): array;
 
