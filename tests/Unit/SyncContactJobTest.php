@@ -245,19 +245,20 @@ class SyncContactJobTest extends TestCase
     public function test_a_create_rejected_as_a_duplicate_adopts_the_existing_contact(): void
     {
         $this->fakeHubspot([
-            'https://api.hubapi.com/crm/v3/objects/contacts/12345' => Http::response(['id' => '12345'], 200),
-            'https://api.hubapi.com/crm/v3/objects/contacts'       => Http::response([
-                'status'   => 'error',
-                'message'  => 'Contact already exists. Existing ID: 12345',
-                'category' => 'CONFLICT',
+            'https://api.hubapi.com/crm/v3/objects/contacts/247867309742' => Http::response(['id' => '247867309742'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts'              => Http::response([
+                'status'        => 'error',
+                'message'       => 'Contact already exists. Existing ID: 247867309742',
+                'correlationId' => '01a09086-5fe9-70ea-8eea-5d3ded31fe2c',
+                'category'      => 'CONFLICT',
             ], 409),
         ]);
 
         $this->runJob('create');
 
-        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), '12345'));
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), '247867309742'));
 
-        $this->assertSame('12345', HubspotContact::contactIdFor(1));
+        $this->assertSame('247867309742', HubspotContact::contactIdFor(1));
 
         $log = HubspotSyncLog::query()->firstOrFail();
         $this->assertSame(200, $log->status_code);

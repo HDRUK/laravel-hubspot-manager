@@ -159,11 +159,50 @@ class HubspotServiceTest extends TestCase
         $this->hubspot()->findContactIdBy('email', 'jane@example.com');
     }
 
-    public function test_conflict_exposes_the_contact_that_already_exists(): void
+    /**
+     * Verbatim from a real duplicate create against a HubSpot portal (with 
+     * modified values to avoid exposure of real information), which
+     * answered HTTP 409. Anything derived from HubSpot's wording is
+     * tested here so a change to it fails as a specific test rather than as
+     * silently duplicated contacts.
+     *
+     * @return array<string, string>
+     */
+    private function realConflictBody(): array
     {
-        $exception = new HubspotApiException('Contact already exists. Existing ID: 12345', 409);
+        return [
+            'status'        => 'error',
+            'message'       => 'Contact already exists. Existing ID: 247895748263',
+            'correlationId' => '01a10086-5ee9-70aa-8e3a-5d3edd17fe3c',
+            'category'      => 'CONFLICT',
+        ];
+    }
 
-        $this->assertSame('12345', $exception->existingContactId());
+    public function test_a_real_duplicate_conflict_exposes_the_existing_contact(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response($this->realConflictBody(), 409),
+        ]);
+
+        try {
+            $this->hubspot()->createContact(['email' => 'jane@example.com']);
+            $this->fail('Expected a conflict.');
+        } catch (HubspotApiException $e) {
+            $this->assertTrue($e->isConflict());
+            $this->assertSame('247895748263', $e->existingContactId());
+            $this->assertSame('CONFLICT', $e->response['category']);
+        }
+    }
+
+    public function test_a_conflict_is_recognised_by_category_alone(): void
+    {
+        $exception = new HubspotApiException(
+            'Contact already exists. Existing ID: 247895748263',
+            400,
+            $this->realConflictBody(),
+        );
+
+        $this->assertSame('247895748263', $exception->existingContactId());
     }
 
     public function test_a_conflict_without_an_id_exposes_nothing(): void
@@ -175,8 +214,9 @@ class HubspotServiceTest extends TestCase
 
     public function test_a_non_conflict_failure_exposes_nothing(): void
     {
-        $exception = new HubspotApiException('Contact already exists. Existing ID: 12345', 400);
+        $exception = new HubspotApiException('Contact already exists. Existing ID: 247895748263', 400);
 
+        $this->assertFalse($exception->isConflict());
         $this->assertNull($exception->existingContactId());
     }
 

@@ -19,18 +19,36 @@ class HubspotApiException extends RuntimeException
     }
 
     /**
+     * Whether HubSpot rejected this request because the record already
+     * exists. Either signal is enough: the documented error body carries a
+     * category, and the transport carries a status.
+     */
+    public function isConflict(): bool
+    {
+        return $this->statusCode === 409
+            || ($this->response['category'] ?? null) === 'CONFLICT';
+    }
+
+    /**
      * The contact that already holds this email, when HubSpot rejected a
      * create as a duplicate.
      *
-     * HubSpot reports it in the message rather than as a field:
-     * {"status":"error","message":"Contact already exists. Existing ID:
-     * 12345","category":"CONFLICT"}. Parsing prose is fragile, so a message
-     * that does not carry an id resolves to null and the caller rethrows
-     * rather than guessing.
+     * HubSpot puts the id in the message rather than in a field. Observed
+     * response, HTTP 409:
+     *
+     *   {"status":"error",
+     *    "message":"Contact already exists. Existing ID: 247895748263",
+     *    "correlationId":"...",
+     *    "category":"CONFLICT"}
+     *
+     * That wording is not documented, and HubSpot's error handling reference
+     * says every field of an error body should be treated as optional, so it
+     * can change without notice. A message that carries no id resolves to
+     * null and the caller rethrows rather than guessing.
      */
     public function existingContactId(): ?string
     {
-        if ($this->statusCode !== 409) {
+        if (!$this->isConflict()) {
             return null;
         }
 
