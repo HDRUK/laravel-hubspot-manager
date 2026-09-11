@@ -159,6 +159,27 @@ class HubspotServiceTest extends TestCase
         $this->hubspot()->findContactIdBy('email', 'jane@example.com');
     }
 
+    public function test_conflict_exposes_the_contact_that_already_exists(): void
+    {
+        $exception = new HubspotApiException('Contact already exists. Existing ID: 12345', 409);
+
+        $this->assertSame('12345', $exception->existingContactId());
+    }
+
+    public function test_a_conflict_without_an_id_exposes_nothing(): void
+    {
+        $exception = new HubspotApiException('Contact already exists.', 409);
+
+        $this->assertNull($exception->existingContactId());
+    }
+
+    public function test_a_non_conflict_failure_exposes_nothing(): void
+    {
+        $exception = new HubspotApiException('Contact already exists. Existing ID: 12345', 400);
+
+        $this->assertNull($exception->existingContactId());
+    }
+
     public function test_delete_contact_returns_true_on_success(): void
     {
         Http::fake([

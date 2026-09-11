@@ -79,8 +79,8 @@ Once a model has been synced, the link between it and its HubSpot contact is sto
 When a model has no stored link, the package asks HubSpot whether it already holds a contact with the same identity before creating one:
 
 1. **Stored link** — the `hubspot_contacts` row, if there is one.
-2. **Lookup by identity** — `GET /crm/v3/objects/contacts/{value}?idProperty={property}`. A contact that predates this package, is adopted and updated rather than duplicated.
-3. **Create** — only when HubSpot holds no matching contact.
+2. **Lookup by identity** — `GET /crm/v3/objects/contacts/{value}?idProperty={property}`. A contact that predates this package is adopted and updated rather than duplicated.
+3. **Create** — only when HubSpot holds no matching contact. If HubSpot rejects the create as a duplicate (409), the contact it names in the error is adopted instead. This covers the case where two queue workers race, or a contact appears between the lookup and the create.
 
 Deletes never reach step 2. A model that this package has no link for will not archive a HubSpot contact it did not create.
 
@@ -134,13 +134,24 @@ $hubspot = app(\Hdruk\LaravelHubspotManager\Services\Hubspot::class);
 
 Every sync attempt — successful or not — is recorded in the `hubspot_sync_logs` table.
 
-| Column               | Description                                         |
-| -------------------- | --------------------------------------------------- |
-| `user_id`            | Primary key of the synced model                     |
-| `action`             | `create`, `update`, or `delete`                     |
-| `status_code`        | HTTP status returned by HubSpot                     |
-| `hubspot_contact_id` | The HubSpot contact ID (nullable on delete/failure) |
-| `error`              | Error message on failure, `null` on success         |
+| Column               | Description                                       |
+|----------------------|---------------------------------------------------|
+| `user_id`            | Primary key of the synced model                   |
+| `action`             | `create`, `update`, or `delete`                   |
+| `status_code`        | HTTP status returned by HubSpot                   |
+| `hubspot_contact_id` | The HubSpot contact ID (nullable on failure)      |
+| `resolved_via`       | How the contact was arrived at, `null` on failure |
+| `error`              | Error message on failure, `null` on success       |
+
+`resolved_via` records which of the steps above applied — `link`, `lookup`, `conflict`, or `created` — so you can see how often existing contacts are being adopted rather than duplicated:
+
+```php
+HubspotSyncLog::query()
+    ->whereNotNull('resolved_via')
+    ->selectRaw('resolved_via, count(*) as total')
+    ->groupBy('resolved_via')
+    ->pluck('total', 'resolved_via');
+```
 
 Access logs via the relationship added by the trait:
 
@@ -174,6 +185,7 @@ Event::listen(HubspotContactSynced::class, function (HubspotContactSynced $event
     // $event->action         — 'create' | 'update' | 'delete'
     // $event->statusCode     — HTTP status code
     // $event->hubspotContactId — HubSpot contact ID (nullable)
+    // $event->resolvedVia    — 'link' | 'lookup' | 'conflict' | 'created' (nullable)
 });
 ```
 

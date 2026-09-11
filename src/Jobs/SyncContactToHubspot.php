@@ -47,31 +47,37 @@ class SyncContactToHubspot implements ShouldQueue
             return;
         }
 
-        $hubspotContactId = null;
-        $statusCode = 200;
+        $outcome = new SyncOutcome(null, 200);
         $error = null;
 
         try {
-            [$hubspotContactId, $statusCode] = match ($this->action) {
+            $outcome = match ($this->action) {
                 'create' => $this->handleCreate($hubspot),
                 'update' => $this->handleUpdate($hubspot),
                 'delete' => $this->handleDelete($hubspot),
                 default  => throw new InvalidArgumentException("Unknown HubSpot sync action [{$this->action}]."),
             };
         } catch (HubspotApiException $e) {
-            $statusCode = $e->statusCode;
+            $outcome = new SyncOutcome(null, $e->statusCode);
             $error = $e->getMessage();
             throw $e;
         } finally {
             HubspotSyncLog::create([
                 'user_id'            => $this->model->getKey(),
                 'action'             => $this->action,
-                'status_code'        => $statusCode,
-                'hubspot_contact_id' => $hubspotContactId,
+                'status_code'        => $outcome->statusCode,
+                'hubspot_contact_id' => $outcome->contactId,
+                'resolved_via'       => $outcome->resolvedVia,
                 'error'              => $error,
             ]);
 
-            event(new HubspotContactSynced($this->model, $this->action, $statusCode, $hubspotContactId));
+            event(new HubspotContactSynced(
+                $this->model,
+                $this->action,
+                $outcome->statusCode,
+                $outcome->contactId,
+                $outcome->resolvedVia,
+            ));
         }
     }
 
@@ -86,25 +92,19 @@ class SyncContactToHubspot implements ShouldQueue
         ]);
     }
 
-    /**
-     * @return array{0: string|null, 1: int}
-     */
-    private function handleCreate(Hubspot $hubspot): array
+    private function handleCreate(Hubspot $hubspot): SyncOutcome
     {
         $existingContactId = HubspotContact::contactIdFor($this->model->getKey());
 
         if ($existingContactId !== null) {
             $hubspot->updateContact($existingContactId, $this->properties());
-            return [$existingContactId, 200];
+            return new SyncOutcome($existingContactId, 200, SyncOutcome::VIA_LINK);
         }
 
         return $this->adoptOrCreate($hubspot);
     }
 
-    /**
-     * @return array{0: string|null, 1: int}
-     */
-    private function handleUpdate(Hubspot $hubspot): array
+    private function handleUpdate(Hubspot $hubspot): SyncOutcome
     {
         $contactId = HubspotContact::contactIdFor($this->model->getKey());
 
@@ -114,24 +114,21 @@ class SyncContactToHubspot implements ShouldQueue
 
         $hubspot->updateContact($contactId, $this->properties());
 
-        return [$contactId, 200];
+        return new SyncOutcome($contactId, 200, SyncOutcome::VIA_LINK);
     }
 
-    /**
-     * @return array{0: string|null, 1: int}
-     */
-    private function handleDelete(Hubspot $hubspot): array
+    private function handleDelete(Hubspot $hubspot): SyncOutcome
     {
         $contactId = HubspotContact::contactIdFor($this->model->getKey());
 
         if ($contactId === null) {
-            return [null, 204];
+            return new SyncOutcome(null, 204);
         }
 
         $hubspot->deleteContact($contactId);
         HubspotContact::archive($this->model->getKey());
 
-        return [$contactId, 204];
+        return new SyncOutcome($contactId, 204, SyncOutcome::VIA_LINK);
     }
 
     /**
@@ -139,21 +136,19 @@ class SyncContactToHubspot implements ShouldQueue
      * before creating a second one. A contact can predate this package, or
      * predate the model, and creating alongside it would leave two records
      * for one person with no way to tell which is current.
-     *
-     * @return array{0: string|null, 1: int}
      */
-    private function adoptOrCreate(Hubspot $hubspot): array
+    private function adoptOrCreate(Hubspot $hubspot): SyncOutcome
     {
         $contactId = $this->findExistingContactId($hubspot);
 
         if ($contactId === null) {
-            return [$this->createAndLink($hubspot), 201];
+            return $this->createAndLink($hubspot);
         }
 
         $hubspot->updateContact($contactId, $this->properties());
         HubspotContact::link($this->model->getKey(), $contactId);
 
-        return [$contactId, 200];
+        return new SyncOutcome($contactId, 200, SyncOutcome::VIA_LOOKUP);
     }
 
     /**
@@ -176,16 +171,45 @@ class SyncContactToHubspot implements ShouldQueue
      * Linked only after HubSpot has confirmed the id, so a failed create
      * leaves the model unlinked and the next sync retries it.
      */
-    private function createAndLink(Hubspot $hubspot): ?string
+    private function createAndLink(Hubspot $hubspot): SyncOutcome
     {
-        $response = $hubspot->createContact($this->properties());
+        try {
+            $response = $hubspot->createContact($this->properties());
+        } catch (HubspotApiException $e) {
+            return $this->adoptConflictingContact($hubspot, $e);
+        }
+
         $contactId = $response['id'] ?? null;
 
         if ($contactId !== null) {
             HubspotContact::link($this->model->getKey(), (string) $contactId);
         }
 
-        return $contactId;
+        return new SyncOutcome(is_scalar($contactId) ? (string) $contactId : null, 201, SyncOutcome::VIA_CREATED);
+    }
+
+    /**
+     * The last line against duplicates. The lookup can miss — two workers
+     * racing on the same model, or a contact created between the lookup and
+     * the create — and HubSpot then rejects the create as a duplicate and
+     * names the contact holding that email. Adopting it is the only outcome
+     * that does not leave two records for one person.
+     *
+     * Any other failure, including a conflict whose message carries no id,
+     * is rethrown rather than guessed at.
+     */
+    private function adoptConflictingContact(Hubspot $hubspot, HubspotApiException $e): SyncOutcome
+    {
+        $contactId = $e->existingContactId();
+
+        if ($contactId === null) {
+            throw $e;
+        }
+
+        $hubspot->updateContact($contactId, $this->properties());
+        HubspotContact::link($this->model->getKey(), $contactId);
+
+        return new SyncOutcome($contactId, 200, SyncOutcome::VIA_CONFLICT);
     }
 
     /**

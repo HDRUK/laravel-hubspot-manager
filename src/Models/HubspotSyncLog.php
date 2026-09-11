@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $action
  * @property int $status_code
  * @property string|null $hubspot_contact_id
+ * @property string|null $resolved_via
  * @property string|null $error
  * @property \Illuminate\Support\Carbon|null $created_at
  * @property \Illuminate\Support\Carbon|null $updated_at
@@ -23,6 +24,7 @@ class HubspotSyncLog extends Model
         'action',
         'status_code',
         'hubspot_contact_id',
+        'resolved_via',
         'error',
     ];
 

@@ -6,6 +6,7 @@ use Hdruk\LaravelHubspotManager\Contracts\HubspotContactable;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
+use Hdruk\LaravelHubspotManager\Jobs\SyncOutcome;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
@@ -238,6 +239,92 @@ class SyncContactJobTest extends TestCase
             Http::assertNotSent(fn ($r) => $r->method() === 'POST');
             $this->assertNull(HubspotContact::contactIdFor(1));
             $this->assertSame(500, HubspotSyncLog::query()->firstOrFail()->status_code);
+        }
+    }
+
+    public function test_a_create_rejected_as_a_duplicate_adopts_the_existing_contact(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/12345' => Http::response(['id' => '12345'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts'       => Http::response([
+                'status'   => 'error',
+                'message'  => 'Contact already exists. Existing ID: 12345',
+                'category' => 'CONFLICT',
+            ], 409),
+        ]);
+
+        $this->runJob('create');
+
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), '12345'));
+
+        $this->assertSame('12345', HubspotContact::contactIdFor(1));
+
+        $log = HubspotSyncLog::query()->firstOrFail();
+        $this->assertSame(200, $log->status_code);
+        $this->assertSame(SyncOutcome::VIA_CONFLICT, $log->resolved_via);
+        $this->assertNull($log->error);
+    }
+
+    public function test_a_conflict_without_an_id_is_not_recovered(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response([
+                'message' => 'Contact already exists.',
+            ], 409),
+        ]);
+
+        $this->expectException(HubspotApiException::class);
+
+        try {
+            $this->runJob('create');
+        } finally {
+            Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
+            $this->assertNull(HubspotContact::contactIdFor(1));
+            $this->assertSame(409, HubspotSyncLog::query()->firstOrFail()->status_code);
+        }
+    }
+
+    public function test_the_sync_log_records_how_the_contact_was_resolved(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
+        ]);
+        $this->runJob('create');
+        $this->assertSame(SyncOutcome::VIA_CREATED, HubspotSyncLog::query()->firstOrFail()->resolved_via);
+
+        HubspotSyncLog::query()->delete();
+
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
+        ]);
+        $this->runJob('update');
+        $this->assertSame(SyncOutcome::VIA_LINK, HubspotSyncLog::query()->firstOrFail()->resolved_via);
+    }
+
+    public function test_an_adopted_contact_is_recorded_as_resolved_by_lookup(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['id' => 'hs-900'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-900'              => Http::response(['id' => 'hs-900'], 200),
+        ]);
+
+        $this->runJob('create');
+
+        $this->assertSame(SyncOutcome::VIA_LOOKUP, HubspotSyncLog::query()->firstOrFail()->resolved_via);
+    }
+
+    public function test_a_failed_sync_records_no_resolution(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['message' => 'Invalid email'], 400),
+        ]);
+
+        $this->expectException(HubspotApiException::class);
+
+        try {
+            $this->runJob('create');
+        } finally {
+            $this->assertNull(HubspotSyncLog::query()->firstOrFail()->resolved_via);
         }
     }
 
