@@ -35,6 +35,21 @@ class HubspotServiceTest extends TestCase
         Http::preventStrayRequests();
     }
 
+    public function test_surrounding_whitespace_is_stripped_from_the_base_url(): void
+    {
+        config($this->validConfig());
+        config(['hubspotmanager.default.access.hubspot_base_url' => " https://api.hubapi.com\n"]);
+
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => '12345'], 201),
+        ]);
+
+        (new Hubspot())->createContact(['email' => 'jane@example.com']);
+
+        Http::assertSent(fn ($request) =>
+            $request->url() === 'https://api.hubapi.com/crm/v3/objects/contacts');
+    }
+
     public function test_create_contact_posts_properties_and_returns_array(): void
     {
         Http::fake([
