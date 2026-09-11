@@ -18,7 +18,7 @@ class Hubspot
     {
         $this->validateConfiguration();
 
-        $this->baseUrl = rtrim(config('hubspotmanager.default.access.hubspot_base_url'), '/');
+        $this->baseUrl = rtrim(trim((string) config('hubspotmanager.default.access.hubspot_base_url')), '/');
         $this->contactsEndpoint = config('hubspotmanager.default.endpoints.contacts');
         $this->headers = [
             'Accept' => 'application/json',
