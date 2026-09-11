@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Hdruk\LaravelHubspotManager\Contracts\HubspotContactable;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
@@ -21,7 +22,7 @@ class SyncContactToHubspot implements ShouldQueue
     public int $tries = 3;
 
     public function __construct(
-        public readonly Model $model,
+        public readonly Model&HubspotContactable $model,
         public readonly string $action,
     ) {}
 

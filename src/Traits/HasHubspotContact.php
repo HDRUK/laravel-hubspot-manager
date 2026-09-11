@@ -28,6 +28,38 @@ trait HasHubspotContact
         ]);
     }
 
+    /**
+     * The HubSpot property that uniquely identifies this contact. Override
+     * on the model if it is identified by something other than the
+     * configured default.
+     */
+    public function hubspotIdentityProperty(): string
+    {
+        return config('hubspotmanager.default.identity_property', 'email');
+    }
+
+    /**
+     * Read from the mapped properties rather than the model's attributes,
+     * because the identity is named by its HubSpot property, which need not
+     * match the local column.
+     *
+     * Anything that is absent, non-scalar or blank once trimmed resolves to
+     * null, so that a model with no usable identity is never looked up with
+     * an empty value.
+     */
+    public function hubspotIdentityValue(): ?string
+    {
+        $value = $this->toHubspotProperties()[$this->hubspotIdentityProperty()] ?? null;
+
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
+    }
+
     public function hubspotSyncLogs(): HasMany
     {
         return $this->hasMany(HubspotSyncLog::class, 'user_id');

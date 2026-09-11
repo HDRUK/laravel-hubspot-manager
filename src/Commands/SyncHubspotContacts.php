@@ -18,7 +18,7 @@ class SyncHubspotContacts extends Command
             return Command::SUCCESS;
         }
 
-        /** @var class-string<\Illuminate\Database\Eloquent\Model> $modelClass */
+        /** @var class-string<\Illuminate\Database\Eloquent\Model&\Hdruk\LaravelHubspotManager\Contracts\HubspotContactable> $modelClass */
         $modelClass = config('hubspotmanager.default.models.users');
 
         if ($id = $this->option('user')) {

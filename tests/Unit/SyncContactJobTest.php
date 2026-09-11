@@ -2,6 +2,7 @@
 
 namespace Hdruk\LaravelHubspotManager\Tests\Unit;
 
+use Hdruk\LaravelHubspotManager\Contracts\HubspotContactable;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
@@ -9,6 +10,7 @@ use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
+use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
@@ -36,7 +38,9 @@ class SyncContactJobTest extends TestCase
 
     private function fakeModel(int $id = 1, array $properties = ['email' => 'jane@example.com']): object
     {
-        $model = new class extends \Illuminate\Database\Eloquent\Model {
+        $model = new class extends \Illuminate\Database\Eloquent\Model implements HubspotContactable {
+            use HasHubspotContact;
+
             public int $fakeId = 1;
             public array $fakeProperties = [];
 
@@ -273,6 +277,15 @@ class SyncContactJobTest extends TestCase
             $this->assertSame('Invalid email', $log->error);
             $this->assertNull($log->hubspot_contact_id);
         }
+    }
+
+    public function test_a_model_that_cannot_be_synced_is_rejected_at_dispatch(): void
+    {
+        $model = new class extends \Illuminate\Database\Eloquent\Model {};
+
+        $this->expectException(\TypeError::class);
+
+        new SyncContactToHubspot($model, 'create');
     }
 
     public function test_product_name_is_included_in_properties_when_configured(): void

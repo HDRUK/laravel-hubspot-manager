@@ -35,6 +35,7 @@ HUBSPOT_BASE_URL=https://api.hubapi.com        # default, can be omitted
 HUBSPOT_INTEGRATION_ENABLED=true               # default, can be omitted
 HUBSPOT_INTEGRATION_PRODUCT_NAME=MyApp         # optional — for your reference
 HUBSPOT_SYNC_USER_MODEL=App\Models\User        # default, can be omitted
+HUBSPOT_IDENTITY_PROPERTY=email                # default, can be omitted
 ```
 
 The full config is available at `config/hubspotmanager.php` after publishing.
@@ -43,16 +44,19 @@ The full config is available at `config/hubspotmanager.php` after publishing.
 
 ## Automatic sync via the trait
 
-Add `HasHubspotContact` to any Eloquent model you want synced. Model `created`, `updated`, and `deleted` events will automatically dispatch a queued job to HubSpot.
+Add `HasHubspotContact` to any Eloquent model you want synced, and declare the `HubspotContactable` contract. Model `created`, `updated`, and `deleted` events will automatically dispatch a queued job to HubSpot.
 
 ```php
+use Hdruk\LaravelHubspotManager\Contracts\HubspotContactable;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 
-class User extends Authenticatable
+class User extends Authenticatable implements HubspotContactable
 {
     use HasHubspotContact;
 }
 ```
+
+The trait implements everything the contract requires, so declaring it is normally the only change. The sync job accepts `Model&HubspotContactable`, so a model that cannot be synced is rejected where the job is constructed rather than failing partway through a queued job.
 
 By default the trait maps `email`, `first_name` / `firstname`, and `last_name` / `lastname` to their HubSpot equivalents. Override `toHubspotProperties()` to customise the mapping:
 
@@ -68,7 +72,20 @@ public function toHubspotProperties(): array
 }
 ```
 
-The sync job resolves the HubSpot contact ID automatically from the sync log, so updates and deletes target the correct record without any extra configuration.
+### How a model is matched to a HubSpot contact
+
+Once a model has been synced, the link between it and its HubSpot contact is stored in the `hubspot_contacts` table, so updates and deletes target the correct record without any extra configuration. Installs that predate this table have their links backfilled from `hubspot_sync_logs` when the migration runs.
+
+Contacts are identified in HubSpot by `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts. Set `HUBSPOT_IDENTITY_PROPERTY` to use a different property across all models, or override the method on a single model:
+
+```php
+public function hubspotIdentityProperty(): string
+{
+    return 'hs_object_id';
+}
+```
+
+The value is read from `toHubspotProperties()`, keyed by HubSpot property name, so it keeps working when your local column is named differently. A model whose identity is missing, blank, or non-scalar has no identity, and will never be matched against an existing contact by value.
 
 ## Manual usage via the Facade
 
@@ -122,6 +139,18 @@ $user->hubspotSyncLogs;
 
 $user->hubspotSyncLogs()->where('action', 'create')->first()->wasSuccessful(); // true/false
 ```
+
+## Contact mapping
+
+The `hubspot_contacts` table holds the current link between a model and its HubSpot contact — one row per model, and present state only. The history of how that state was reached stays in `hubspot_sync_logs`.
+
+| Column | Description |
+|---|---|
+| `user_id` | Primary key of the synced model, unique |
+| `hubspot_contact_id` | The HubSpot contact this model is linked to |
+| `archived_at` | Set when the contact is archived in HubSpot, `null` while the link is live |
+
+Note that deleting a model **archives** its HubSpot contact — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
 
 ## Events
 
