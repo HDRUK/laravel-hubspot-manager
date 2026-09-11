@@ -501,6 +501,37 @@ class SyncContactJobTest extends TestCase
         }
     }
 
+    public function test_an_unexpected_failure_is_not_logged_as_a_success(): void
+    {
+        $model = new class extends Model {
+            public function getKey(): mixed
+            {
+                return 1;
+            }
+
+            /**
+             * @return array<string, mixed>
+             */
+            public function toHubspotProperties(): array
+            {
+                throw new \RuntimeException('organisation relation is null');
+            }
+        };
+
+        $this->fakeHubspot();
+
+        $this->expectException(\RuntimeException::class);
+
+        try {
+            $this->runJob('create', $model);
+        } finally {
+            $log = HubspotSyncLog::query()->firstOrFail();
+            $this->assertSame(SyncOutcome::NO_HTTP_STATUS, $log->status_code);
+            $this->assertSame('organisation relation is null', $log->error);
+            $this->assertNull($log->hubspot_contact_id);
+        }
+    }
+
     public function test_a_model_that_cannot_be_synced_is_rejected_at_dispatch(): void
     {
         $model = new class extends Model {};

@@ -50,7 +50,7 @@ class SyncContactToHubspot implements ShouldQueue
             return;
         }
 
-        $outcome = new SyncOutcome(null, 200);
+        $outcome = new SyncOutcome(null, SyncOutcome::NO_HTTP_STATUS);
         $error = null;
 
         try {
@@ -59,8 +59,11 @@ class SyncContactToHubspot implements ShouldQueue
                 HubspotAction::Update => $this->handleUpdate($hubspot),
                 HubspotAction::Delete => $this->handleDelete($hubspot),
             };
-        } catch (HubspotApiException $e) {
-            $outcome = new SyncOutcome(null, $e->statusCode);
+        } catch (\Throwable $e) {
+            $outcome = new SyncOutcome(
+                null,
+                $e instanceof HubspotApiException ? $e->statusCode : SyncOutcome::NO_HTTP_STATUS,
+            );
             $error = $e->getMessage();
             throw $e;
         } finally {
@@ -88,7 +91,9 @@ class SyncContactToHubspot implements ShouldQueue
         HubspotSyncLog::create([
             'user_id'            => $this->model->getKey(),
             'action'             => $this->action->value,
-            'status_code'        => $exception instanceof HubspotApiException ? $exception->statusCode : 0,
+            'status_code'        => $exception instanceof HubspotApiException
+                ? $exception->statusCode
+                : SyncOutcome::NO_HTTP_STATUS,
             'hubspot_contact_id' => null,
             'error'              => 'All retries exhausted: ' . $exception->getMessage(),
         ]);
