@@ -75,6 +75,38 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * The id of the contact holding this value for a unique property, or null
+     * when HubSpot holds no such contact.
+     *
+     * Uses retrieve-by-unique-property rather than the search API: search is
+     * eventually consistent, so a contact created moments ago may not be
+     * found, and it is rate limited an order of magnitude lower. This reads
+     * the record directly and answers 404 when there is none.
+     *
+     * Archived contacts are excluded. A contact in the recycling bin cannot
+     * be patched, and re-linking to one would hide the fact that HubSpot
+     * will treat the next create as a new record.
+     */
+    public function findContactIdBy(string $property, string $value): ?string
+    {
+        $response = Http::withHeaders($this->headers)
+            ->get("{$this->baseUrl}/{$this->contactsEndpoint}/" . rawurlencode($value), [
+                'idProperty' => $property,
+                'archived'   => 'false',
+            ]);
+
+        if ($response->status() === 404) {
+            return null;
+        }
+
+        $this->throwIfFailed($response);
+
+        $id = $response->json('id');
+
+        return is_scalar($id) ? (string) $id : null;
+    }
+
     public function deleteContact(string $contactId): bool
     {
         $response = Http::withHeaders($this->headers)

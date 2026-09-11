@@ -26,6 +26,15 @@ class HubspotServiceTest extends TestCase
         return new Hubspot();
     }
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // An unfaked URL in an Http::fake() array is passed through to the
+        // real network, so a test that misses one would call HubSpot.
+        Http::preventStrayRequests();
+    }
+
     public function test_create_contact_posts_properties_and_returns_array(): void
     {
         Http::fake([
@@ -94,6 +103,60 @@ class HubspotServiceTest extends TestCase
             && str_contains($request->url(), '/crm/v3/objects/contacts/12345')
             && $request->data()['properties']['firstname'] === 'Jane'
         );
+    }
+
+    public function test_find_contact_id_by_returns_the_id_of_a_matching_contact(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response([
+                'id' => '12345',
+                'properties' => ['email' => 'jane@example.com'],
+            ], 200),
+        ]);
+
+        $result = $this->hubspot()->findContactIdBy('email', 'jane@example.com');
+
+        $this->assertSame('12345', $result);
+    }
+
+    public function test_find_contact_id_by_looks_up_the_unique_property_excluding_archived(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response(['id' => '12345'], 200),
+        ]);
+
+        $this->hubspot()->findContactIdBy('email', 'jane@example.com');
+
+        Http::assertSent(fn ($request) =>
+            $request->method() === 'GET'
+            && str_contains($request->url(), '/contacts/jane%40example.com')
+            && str_contains($request->url(), 'idProperty=email')
+            && str_contains($request->url(), 'archived=false')
+        );
+    }
+
+    public function test_find_contact_id_by_returns_null_when_no_contact_holds_the_value(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response([
+                'message' => 'resource not found',
+            ], 404),
+        ]);
+
+        $this->assertNull($this->hubspot()->findContactIdBy('email', 'nobody@example.com'));
+    }
+
+    public function test_find_contact_id_by_throws_on_other_failures(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response([
+                'message' => 'internal error',
+            ], 500),
+        ]);
+
+        $this->expectException(HubspotApiException::class);
+
+        $this->hubspot()->findContactIdBy('email', 'jane@example.com');
     }
 
     public function test_delete_contact_returns_true_on_success(): void

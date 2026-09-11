@@ -98,7 +98,7 @@ class SyncContactToHubspot implements ShouldQueue
             return [$existingContactId, 200];
         }
 
-        return [$this->createAndLink($hubspot), 201];
+        return $this->adoptOrCreate($hubspot);
     }
 
     /**
@@ -109,7 +109,7 @@ class SyncContactToHubspot implements ShouldQueue
         $contactId = HubspotContact::contactIdFor($this->model->getKey());
 
         if ($contactId === null) {
-            return [$this->createAndLink($hubspot), 201];
+            return $this->adoptOrCreate($hubspot);
         }
 
         $hubspot->updateContact($contactId, $this->properties());
@@ -132,6 +132,44 @@ class SyncContactToHubspot implements ShouldQueue
         HubspotContact::archive($this->model->getKey());
 
         return [$contactId, 204];
+    }
+
+    /**
+     * No stored link, so ask HubSpot whether it already holds this contact
+     * before creating a second one. A contact can predate this package, or
+     * predate the model, and creating alongside it would leave two records
+     * for one person with no way to tell which is current.
+     *
+     * @return array{0: string|null, 1: int}
+     */
+    private function adoptOrCreate(Hubspot $hubspot): array
+    {
+        $contactId = $this->findExistingContactId($hubspot);
+
+        if ($contactId === null) {
+            return [$this->createAndLink($hubspot), 201];
+        }
+
+        $hubspot->updateContact($contactId, $this->properties());
+        HubspotContact::link($this->model->getKey(), $contactId);
+
+        return [$contactId, 200];
+    }
+
+    /**
+     * A model with no identity value is never looked up. Asking HubSpot to
+     * match an empty value would match an arbitrary contact, and this model
+     * would adopt a stranger's record.
+     */
+    private function findExistingContactId(Hubspot $hubspot): ?string
+    {
+        $identity = $this->model->hubspotIdentityValue();
+
+        if ($identity === null) {
+            return null;
+        }
+
+        return $hubspot->findContactIdBy($this->model->hubspotIdentityProperty(), $identity);
     }
 
     /**

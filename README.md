@@ -76,6 +76,14 @@ public function toHubspotProperties(): array
 
 Once a model has been synced, the link between it and its HubSpot contact is stored in the `hubspot_contacts` table, so updates and deletes target the correct record without any extra configuration. Installs that predate this table have their links backfilled from `hubspot_sync_logs` when the migration runs.
 
+When a model has no stored link, the package asks HubSpot whether it already holds a contact with the same identity before creating one:
+
+1. **Stored link** — the `hubspot_contacts` row, if there is one.
+2. **Lookup by identity** — `GET /crm/v3/objects/contacts/{value}?idProperty={property}`. A contact that predates this package, is adopted and updated rather than duplicated.
+3. **Create** — only when HubSpot holds no matching contact.
+
+Deletes never reach step 2. A model that this package has no link for will not archive a HubSpot contact it did not create.
+
 Contacts are identified in HubSpot by `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts. Set `HUBSPOT_IDENTITY_PROPERTY` to use a different property across all models, or override the method on a single model:
 
 ```php
@@ -85,7 +93,9 @@ public function hubspotIdentityProperty(): string
 }
 ```
 
-The value is read from `toHubspotProperties()`, keyed by HubSpot property name, so it keeps working when your local column is named differently. A model whose identity is missing, blank, or non-scalar has no identity, and will never be matched against an existing contact by value.
+The value is read from `toHubspotProperties()`, keyed by HubSpot property name, so it keeps working when your local column is named differently. A model whose identity is missing, blank, or non-scalar has no identity: it skips step 2 entirely and goes straight to create, because looking a contact up by an empty value would match an arbitrary record.
+
+Note that the lookup matches on the model's **current** identity. If a contact exists in HubSpot under an old email address and the model's email has since changed, the lookup will not find it and a second contact is created.
 
 ## Manual usage via the Facade
 
@@ -124,13 +134,13 @@ $hubspot = app(\Hdruk\LaravelHubspotManager\Services\Hubspot::class);
 
 Every sync attempt — successful or not — is recorded in the `hubspot_sync_logs` table.
 
-| Column | Description |
-|---|---|
-| `user_id` | Primary key of the synced model |
-| `action` | `create`, `update`, or `delete` |
-| `status_code` | HTTP status returned by HubSpot |
+| Column               | Description                                         |
+| -------------------- | --------------------------------------------------- |
+| `user_id`            | Primary key of the synced model                     |
+| `action`             | `create`, `update`, or `delete`                     |
+| `status_code`        | HTTP status returned by HubSpot                     |
 | `hubspot_contact_id` | The HubSpot contact ID (nullable on delete/failure) |
-| `error` | Error message on failure, `null` on success |
+| `error`              | Error message on failure, `null` on success         |
 
 Access logs via the relationship added by the trait:
 
@@ -144,11 +154,11 @@ $user->hubspotSyncLogs()->where('action', 'create')->first()->wasSuccessful(); /
 
 The `hubspot_contacts` table holds the current link between a model and its HubSpot contact — one row per model, and present state only. The history of how that state was reached stays in `hubspot_sync_logs`.
 
-| Column | Description |
-|---|---|
-| `user_id` | Primary key of the synced model, unique |
-| `hubspot_contact_id` | The HubSpot contact this model is linked to |
-| `archived_at` | Set when the contact is archived in HubSpot, `null` while the link is live |
+| Column               | Description                                                                |
+| -------------------- | -------------------------------------------------------------------------- |
+| `user_id`            | Primary key of the synced model, unique                                    |
+| `hubspot_contact_id` | The HubSpot contact this model is linked to                                |
+| `archived_at`        | Set when the contact is archived in HubSpot, `null` while the link is live |
 
 Note that deleting a model **archives** its HubSpot contact — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
 

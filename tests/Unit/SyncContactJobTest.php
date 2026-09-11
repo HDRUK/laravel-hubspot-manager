@@ -80,6 +80,27 @@ class SyncContactJobTest extends TestCase
         ]);
     }
 
+    /**
+     * Stray requests are blocked rather than sent: an unfaked URL in an
+     * Http::fake() array is passed through to the real network, so a test
+     * that misses one would call HubSpot for real.
+     *
+     * An unlinked model is looked up before it is created, so unless a test
+     * says otherwise HubSpot holds no matching contact.
+     *
+     * @param  array<string, mixed>  $responses
+     */
+    private function fakeHubspot(array $responses = []): void
+    {
+        Http::preventStrayRequests();
+
+        Http::fake($responses + [
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(
+                ['message' => 'resource not found'], 404
+            ),
+        ]);
+    }
+
     private function runJob(string $action, (Model&HubspotContactable)|null $model = null): void
     {
         $job = new SyncContactToHubspot($model ?? $this->fakeModel(), $action);
@@ -88,7 +109,7 @@ class SyncContactJobTest extends TestCase
 
     public function test_create_posts_new_contact_and_writes_sync_log(): void
     {
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
         ]);
 
@@ -104,7 +125,7 @@ class SyncContactJobTest extends TestCase
 
     public function test_create_links_the_model_to_the_new_contact(): void
     {
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
         ]);
 
@@ -114,11 +135,117 @@ class SyncContactJobTest extends TestCase
         $this->assertSame(1, HubspotContact::count());
     }
 
+    public function test_create_adopts_an_existing_hubspot_contact_when_one_matches(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['id' => 'hs-900'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-900'              => Http::response(['id' => 'hs-900'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts'                     => Http::response(['id' => 'hs-new'], 201),
+        ]);
+
+        $this->runJob('create');
+
+        Http::assertSent(fn ($r) => $r->method() === 'GET');
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), 'hs-900'));
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+
+        $this->assertSame('hs-900', HubspotContact::contactIdFor(1));
+
+        $log = HubspotSyncLog::query()->firstOrFail();
+        $this->assertSame(200, $log->status_code);
+        $this->assertSame('hs-900', $log->hubspot_contact_id);
+    }
+
+    public function test_create_creates_when_hubspot_holds_no_matching_contact(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['message' => 'not found'], 404),
+            'https://api.hubapi.com/crm/v3/objects/contacts'                     => Http::response(['id' => 'hs-001'], 201),
+        ]);
+
+        $this->runJob('create');
+
+        Http::assertSent(fn ($r) => $r->method() === 'GET');
+        Http::assertSent(fn ($r) => $r->method() === 'POST');
+
+        $this->assertSame('hs-001', HubspotContact::contactIdFor(1));
+        $this->assertSame(201, HubspotSyncLog::query()->firstOrFail()->status_code);
+    }
+
+    public function test_update_adopts_an_existing_hubspot_contact_when_one_matches(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['id' => 'hs-900'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-900'              => Http::response(['id' => 'hs-900'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts'                     => Http::response(['id' => 'hs-new'], 201),
+        ]);
+
+        $this->runJob('update');
+
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), 'hs-900'));
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+
+        $this->assertSame('hs-900', HubspotContact::contactIdFor(1));
+    }
+
+    public function test_a_model_with_no_identity_is_never_looked_up(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
+        ]);
+
+        $this->runJob('create', $this->fakeModel(properties: ['firstname' => 'Jane']));
+
+        Http::assertNotSent(fn ($r) => $r->method() === 'GET');
+        Http::assertSent(fn ($r) => $r->method() === 'POST');
+    }
+
+    public function test_a_linked_model_is_never_looked_up(): void
+    {
+        $this->seedLink('hs-001');
+
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
+        ]);
+
+        $this->runJob('create');
+
+        Http::assertNotSent(fn ($r) => $r->method() === 'GET');
+    }
+
+    public function test_delete_never_adopts_an_unlinked_contact(): void
+    {
+        $this->fakeHubspot();
+
+        $this->runJob('delete');
+
+        Http::assertNotSent(fn ($r) => $r->method() === 'GET');
+        Http::assertNotSent(fn ($r) => $r->method() === 'DELETE');
+    }
+
+    public function test_a_failed_lookup_does_not_create_a_contact(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['message' => 'boom'], 500),
+            'https://api.hubapi.com/crm/v3/objects/contacts'                     => Http::response(['id' => 'hs-001'], 201),
+        ]);
+
+        $this->expectException(HubspotApiException::class);
+
+        try {
+            $this->runJob('create');
+        } finally {
+            Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+            $this->assertNull(HubspotContact::contactIdFor(1));
+            $this->assertSame(500, HubspotSyncLog::query()->firstOrFail()->status_code);
+        }
+    }
+
     public function test_create_upserts_when_the_model_is_already_linked(): void
     {
         $this->seedLink('hs-001');
 
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
         ]);
 
@@ -133,7 +260,7 @@ class SyncContactJobTest extends TestCase
 
     public function test_update_creates_contact_when_the_model_is_unlinked(): void
     {
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-002'], 201),
         ]);
 
@@ -149,7 +276,7 @@ class SyncContactJobTest extends TestCase
     {
         $this->seedLink('hs-001');
 
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
         ]);
 
@@ -162,9 +289,9 @@ class SyncContactJobTest extends TestCase
     {
         $this->seedLink('hs-001', archivedAt: '2026-01-01 00:00:00');
 
-        Http::fake([
-            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response(['id' => 'hs-001'], 200),
-            'https://api.hubapi.com/crm/v3/objects/contacts'   => Http::response(['id' => 'hs-002'], 201),
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts'        => Http::response(['id' => 'hs-002'], 201),
         ]);
 
         $this->runJob('update');
@@ -178,7 +305,7 @@ class SyncContactJobTest extends TestCase
 
     public function test_failed_create_leaves_the_model_unlinked(): void
     {
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['message' => 'Invalid email'], 400),
         ]);
 
@@ -196,7 +323,7 @@ class SyncContactJobTest extends TestCase
     {
         $this->seedLink('hs-001');
 
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(null, 204),
         ]);
 
@@ -215,7 +342,7 @@ class SyncContactJobTest extends TestCase
 
     public function test_delete_skips_api_when_the_model_was_never_linked(): void
     {
-        Http::fake();
+        $this->fakeHubspot();
 
         $this->runJob('delete');
 
@@ -226,7 +353,7 @@ class SyncContactJobTest extends TestCase
     {
         $this->seedLink('hs-001', archivedAt: '2026-01-01 00:00:00');
 
-        Http::fake();
+        $this->fakeHubspot();
 
         $this->runJob('delete');
 
@@ -236,7 +363,7 @@ class SyncContactJobTest extends TestCase
     public function test_sync_is_skipped_when_disabled(): void
     {
         config(['hubspotmanager.default.enabled' => false]);
-        Http::fake();
+        $this->fakeHubspot();
 
         $this->runJob('create');
 
@@ -249,7 +376,7 @@ class SyncContactJobTest extends TestCase
     {
         Event::fake();
 
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
         ]);
 
@@ -264,7 +391,7 @@ class SyncContactJobTest extends TestCase
 
     public function test_logs_error_and_rethrows_on_api_failure(): void
     {
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response([
                 'message' => 'Invalid email',
             ], 400),
@@ -299,7 +426,7 @@ class SyncContactJobTest extends TestCase
     {
         config(['hubspotmanager.default.product_name' => 'TestApp']);
 
-        Http::fake([
+        $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
         ]);
 
