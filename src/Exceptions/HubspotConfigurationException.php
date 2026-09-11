@@ -2,7 +2,6 @@
 
 namespace Hdruk\LaravelHubspotManager\Exceptions;
 
-use Hdruk\LaravelHubspotManager\Contracts\HubspotContactable;
 use RuntimeException;
 
 class HubspotConfigurationException extends RuntimeException
@@ -10,8 +9,8 @@ class HubspotConfigurationException extends RuntimeException
     public static function notContactable(string $class): self
     {
         return new self(
-            "Laravel HubSpot Manager: configured sync model [{$class}] does not implement "
-            . HubspotContactable::class . ". Add `implements HubspotContactable` to the model."
+            "Laravel HubSpot Manager: model [{$class}] cannot be synced because it does not "
+            . "define toHubspotProperties(). Add the HasHubspotContact trait to the model."
         );
     }
 

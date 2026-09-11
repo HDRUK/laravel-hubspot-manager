@@ -8,9 +8,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Hdruk\LaravelHubspotManager\Contracts\HubspotContactable;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
+use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
@@ -25,9 +25,17 @@ class SyncContactToHubspot implements ShouldQueue
     public const ACTIONS = ['create', 'update', 'delete'];
 
     public function __construct(
-        public readonly Model&HubspotContactable $model,
+        public readonly Model $model,
         public readonly string $action,
     ) {
+        // Checked here rather than by the type, so that a model which cannot
+        // be synced fails where it is dispatched rather than part way through
+        // a queued job, without every consuming model having to declare an
+        // interface to say so.
+        if (!method_exists($model, 'toHubspotProperties')) {
+            throw HubspotConfigurationException::notContactable($model::class);
+        }
+
         if (!in_array($action, self::ACTIONS, true)) {
             throw new InvalidArgumentException("Unknown HubSpot sync action [{$action}].");
         }
@@ -152,19 +160,24 @@ class SyncContactToHubspot implements ShouldQueue
     }
 
     /**
-     * A model with no identity value is never looked up. Asking HubSpot to
-     * match an empty value would match an arbitrary contact, and this model
-     * would adopt a stranger's record.
+     * Contacts are looked up by email, which is the property HubSpot itself
+     * dedupes on and the only one guaranteed to identify a contact.
+     *
+     * An address that is absent, non-scalar or blank once trimmed yields no
+     * lookup at all. Asking HubSpot to match an empty value matches an
+     * arbitrary contact, and this model would adopt a stranger's record.
      */
     private function findExistingContactId(Hubspot $hubspot): ?string
     {
-        $identity = $this->model->hubspotIdentityValue();
+        $email = $this->properties()['email'] ?? null;
 
-        if ($identity === null) {
+        if (!is_scalar($email)) {
             return null;
         }
 
-        return $hubspot->findContactIdBy($this->model->hubspotIdentityProperty(), $identity);
+        $email = trim((string) $email);
+
+        return $email === '' ? null : $hubspot->findContactIdBy('email', $email);
     }
 
     /**
@@ -217,7 +230,10 @@ class SyncContactToHubspot implements ShouldQueue
      */
     private function properties(): array
     {
-        $properties = $this->model->toHubspotProperties();
+        // Guaranteed to exist by the constructor; the analyser cannot see a
+        // method that consuming models supply via the trait.
+        // @phpstan-ignore method.notFound
+        $properties = (array) $this->model->toHubspotProperties();
 
         if ($productName = config('hubspotmanager.default.product_name')) {
             $properties['product_name'] = $productName;

@@ -7,7 +7,6 @@ return [
     'default' => [
         'product_name' => env('HUBSPOT_INTEGRATION_PRODUCT_NAME'),
         'enabled' => env('HUBSPOT_INTEGRATION_ENABLED', true),
-        'identity_property' => env('HUBSPOT_IDENTITY_PROPERTY', 'email'),
         'access' => [
             'hubspot_base_url' => env('HUBSPOT_BASE_URL', 'https://api.hubapi.com'),
             'hubspot_api_key' => env('HUBSPOT_API_KEY'),

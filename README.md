@@ -35,7 +35,6 @@ HUBSPOT_BASE_URL=https://api.hubapi.com        # default, can be omitted
 HUBSPOT_INTEGRATION_ENABLED=true               # default, can be omitted
 HUBSPOT_INTEGRATION_PRODUCT_NAME=MyApp         # optional — for your reference
 HUBSPOT_SYNC_USER_MODEL=App\Models\User        # default, can be omitted
-HUBSPOT_IDENTITY_PROPERTY=email                # default, can be omitted
 ```
 
 The full config is available at `config/hubspotmanager.php` after publishing.
@@ -44,19 +43,18 @@ The full config is available at `config/hubspotmanager.php` after publishing.
 
 ## Automatic sync via the trait
 
-Add `HasHubspotContact` to any Eloquent model you want synced, and declare the `HubspotContactable` contract. Model `created`, `updated`, and `deleted` events will automatically dispatch a queued job to HubSpot.
+Add `HasHubspotContact` to any Eloquent model you want synced. Model `created`, `updated`, and `deleted` events will automatically dispatch a queued job to HubSpot.
 
 ```php
-use Hdruk\LaravelHubspotManager\Contracts\HubspotContactable;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 
-class User extends Authenticatable implements HubspotContactable
+class User extends Authenticatable
 {
     use HasHubspotContact;
 }
 ```
 
-The trait implements everything the contract requires, so declaring it is normally the only change. The sync job accepts `Model&HubspotContactable`, so a model that cannot be synced is rejected where the job is constructed rather than failing partway through a queued job.
+A model that defines no `toHubspotProperties()` is rejected where the job is constructed rather than failing partway through a queued job.
 
 By default the trait maps `email`, `first_name` / `firstname`, and `last_name` / `lastname` to their HubSpot equivalents. Override `toHubspotProperties()` to customise the mapping:
 
@@ -84,16 +82,9 @@ When a model has no stored link, the package asks HubSpot whether it already hol
 
 Deletes never reach step 2. A model that this package has no link for will not archive a HubSpot contact it did not create.
 
-Contacts are identified in HubSpot by `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts. Set `HUBSPOT_IDENTITY_PROPERTY` to use a different property across all models, or override the method on a single model:
+The lookup matches on `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts, and is not configurable for that reason. The address is read from `toHubspotProperties()`, so it keeps working when your local column is named differently.
 
-```php
-public function hubspotIdentityProperty(): string
-{
-    return 'hs_object_id';
-}
-```
-
-The value is read from `toHubspotProperties()`, keyed by HubSpot property name, so it keeps working when your local column is named differently. A model whose identity is missing, blank, or non-scalar has no identity: it skips step 2 entirely and goes straight to create, because looking a contact up by an empty value would match an arbitrary record.
+A model whose email is missing, blank, or non-scalar skips step 2 entirely and goes straight to create, because looking a contact up by an empty value would match an arbitrary record.
 
 Note that the lookup matches on the model's **current** identity. If a contact exists in HubSpot under an old email address and the model's email has since changed, the lookup will not find it and a second contact is created.
 

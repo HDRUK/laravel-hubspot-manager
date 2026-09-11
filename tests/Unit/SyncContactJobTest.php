@@ -2,9 +2,9 @@
 
 namespace Hdruk\LaravelHubspotManager\Tests\Unit;
 
-use Hdruk\LaravelHubspotManager\Contracts\HubspotContactable;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
+use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Jobs\SyncOutcome;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
@@ -41,9 +41,9 @@ class SyncContactJobTest extends TestCase
     /**
      * @param  array<string, mixed>  $properties
      */
-    private function fakeModel(int $id = 1, array $properties = ['email' => 'jane@example.com']): Model&HubspotContactable
+    private function fakeModel(int $id = 1, array $properties = ['email' => 'jane@example.com']): Model
     {
-        $model = new class extends Model implements HubspotContactable {
+        $model = new class extends Model {
             use HasHubspotContact;
 
             public int $fakeId = 1;
@@ -55,6 +55,9 @@ class SyncContactJobTest extends TestCase
                 return $this->fakeId;
             }
 
+            /**
+             * @return array<string, mixed>
+             */
             public function toHubspotProperties(): array
             {
                 return $this->fakeProperties;
@@ -102,7 +105,7 @@ class SyncContactJobTest extends TestCase
         ]);
     }
 
-    private function runJob(string $action, (Model&HubspotContactable)|null $model = null): void
+    private function runJob(string $action, ?Model $model = null): void
     {
         $job = new SyncContactToHubspot($model ?? $this->fakeModel(), $action);
         $job->handle($this->hubspot());
@@ -499,15 +502,64 @@ class SyncContactJobTest extends TestCase
 
     public function test_a_model_that_cannot_be_synced_is_rejected_at_dispatch(): void
     {
-        $model = new class extends \Illuminate\Database\Eloquent\Model {};
+        $model = new class extends Model {};
 
-        $this->expectException(\TypeError::class);
+        $this->expectException(HubspotConfigurationException::class);
+        $this->expectExceptionMessageMatches('/toHubspotProperties/');
 
-        // PHPStan reports this call too, which is the point: the contract is
-        // enforced statically, and this test pins the runtime backstop for
-        // consumers who do not run static analysis.
-        // @phpstan-ignore argument.type
         new SyncContactToHubspot($model, 'create');
+    }
+
+    public function test_a_model_using_only_the_trait_is_adopted_by_lookup(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['id' => 'hs-900'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-900'              => Http::response(['id' => 'hs-900'], 200),
+        ]);
+
+        $this->runJob('create');
+
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_contains($r->url(), 'hs-900'));
+        $this->assertSame('hs-900', HubspotContact::contactIdFor(1));
+    }
+
+    public function test_an_email_is_trimmed_before_being_looked_up(): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['id' => 'hs-900'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-900'              => Http::response(['id' => 'hs-900'], 200),
+        ]);
+
+        $this->runJob('create', $this->fakeModel(properties: ['email' => "  jane@example.com\n"]));
+
+        Http::assertSent(fn ($r) =>
+            $r->method() === 'GET' && str_contains($r->url(), '/contacts/jane%40example.com?'));
+    }
+
+    /**
+     * @return array<string, array{mixed}>
+     */
+    public static function unusableEmails(): array
+    {
+        return [
+            'null'       => [null],
+            'empty'      => [''],
+            'whitespace' => ["  \t "],
+            'non scalar' => [['jane@example.com']],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unusableEmails')]
+    public function test_an_unusable_email_is_never_looked_up(mixed $email): void
+    {
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
+        ]);
+
+        $this->runJob('create', $this->fakeModel(properties: ['email' => $email]));
+
+        Http::assertNotSent(fn ($r) => $r->method() === 'GET');
+        Http::assertSent(fn ($r) => $r->method() === 'POST');
     }
 
     public function test_product_name_is_included_in_properties_when_configured(): void
