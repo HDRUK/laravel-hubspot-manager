@@ -6,6 +6,14 @@ use RuntimeException;
 
 class HubspotConfigurationException extends RuntimeException
 {
+    public static function notContactable(string $class): self
+    {
+        return new self(
+            "Laravel HubSpot Manager: model [{$class}] cannot be synced because it does not "
+            . "define toHubspotProperties(). Add the HasHubspotContact trait to the model."
+        );
+    }
+
     public static function missingKey(string $key): self
     {
         return new self(

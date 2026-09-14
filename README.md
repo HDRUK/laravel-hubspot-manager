@@ -54,6 +54,8 @@ class User extends Authenticatable
 }
 ```
 
+A model that defines no `toHubspotProperties()` is rejected where the job is constructed rather than failing partway through a queued job.
+
 By default the trait maps `email`, `first_name` / `firstname`, and `last_name` / `lastname` to their HubSpot equivalents. Override `toHubspotProperties()` to customise the mapping:
 
 ```php
@@ -68,7 +70,23 @@ public function toHubspotProperties(): array
 }
 ```
 
-The sync job resolves the HubSpot contact ID automatically from the sync log, so updates and deletes target the correct record without any extra configuration.
+### How a model is matched to a HubSpot contact
+
+Once a model has been synced, the link between it and its HubSpot contact is stored in the `hubspot_contacts` table, so updates and deletes target the correct record without any extra configuration. Installs that predate this table have their links backfilled from `hubspot_sync_logs` when the migration runs.
+
+When a model has no stored link, the package asks HubSpot whether it already holds a contact with the same identity before creating one:
+
+1. **Stored link** — the `hubspot_contacts` row, if there is one.
+2. **Lookup by identity** — `GET /crm/v3/objects/contacts/{value}?idProperty={property}`. A contact that predates this package is adopted and updated rather than duplicated.
+3. **Create** — only when HubSpot holds no matching contact. If HubSpot rejects the create as a duplicate (409), the contact it names in the error is adopted instead. This covers the case where two queue workers race, or a contact appears between the lookup and the create.
+
+Deletes never reach step 2. A model that this package has no link for will not archive a HubSpot contact it did not create.
+
+The lookup matches on `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts, and is not configurable for that reason. The address is read from `toHubspotProperties()`, so it keeps working when your local column is named differently.
+
+A model whose email is missing, blank, or non-scalar skips step 2 entirely and goes straight to create, because looking a contact up by an empty value would match an arbitrary record.
+
+Note that the lookup matches on the model's **current** identity. If a contact exists in HubSpot under an old email address and the model's email has since changed, the lookup will not find it and a second contact is created.
 
 ## Manual usage via the Facade
 
@@ -107,13 +125,24 @@ $hubspot = app(\Hdruk\LaravelHubspotManager\Services\Hubspot::class);
 
 Every sync attempt — successful or not — is recorded in the `hubspot_sync_logs` table.
 
-| Column | Description |
-|---|---|
-| `user_id` | Primary key of the synced model |
-| `action` | `create`, `update`, or `delete` |
-| `status_code` | HTTP status returned by HubSpot |
-| `hubspot_contact_id` | The HubSpot contact ID (nullable on delete/failure) |
-| `error` | Error message on failure, `null` on success |
+| Column               | Description                                       |
+|----------------------|---------------------------------------------------|
+| `user_id`            | Primary key of the synced model                   |
+| `action`             | `create`, `update`, or `delete`                   |
+| `status_code`        | HTTP status returned by HubSpot                   |
+| `hubspot_contact_id` | The HubSpot contact ID (nullable on failure)      |
+| `resolved_via`       | How the contact was arrived at, `null` on failure |
+| `error`              | Error message on failure, `null` on success       |
+
+`resolved_via` records which of the steps above applied — `link`, `lookup`, `conflict`, or `created` — so you can see how often existing contacts are being adopted rather than duplicated:
+
+```php
+HubspotSyncLog::query()
+    ->whereNotNull('resolved_via')
+    ->selectRaw('resolved_via, count(*) as total')
+    ->groupBy('resolved_via')
+    ->pluck('total', 'resolved_via');
+```
 
 Access logs via the relationship added by the trait:
 
@@ -122,6 +151,18 @@ $user->hubspotSyncLogs;
 
 $user->hubspotSyncLogs()->where('action', 'create')->first()->wasSuccessful(); // true/false
 ```
+
+## Contact mapping
+
+The `hubspot_contacts` table holds the current link between a model and its HubSpot contact — one row per model, and present state only. The history of how that state was reached stays in `hubspot_sync_logs`.
+
+| Column               | Description                                                                |
+| -------------------- | -------------------------------------------------------------------------- |
+| `user_id`            | Primary key of the synced model, unique                                    |
+| `hubspot_contact_id` | The HubSpot contact this model is linked to                                |
+| `archived_at`        | Set when the contact is archived in HubSpot, `null` while the link is live |
+
+Note that deleting a model **archives** its HubSpot contact — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
 
 ## Events
 
@@ -135,6 +176,7 @@ Event::listen(HubspotContactSynced::class, function (HubspotContactSynced $event
     // $event->action         — 'create' | 'update' | 'delete'
     // $event->statusCode     — HTTP status code
     // $event->hubspotContactId — HubSpot contact ID (nullable)
+    // $event->resolvedVia    — 'link' | 'lookup' | 'conflict' | 'created' (nullable)
 });
 ```
 

@@ -14,5 +14,6 @@ class HubspotContactSynced
         public readonly string $action,
         public readonly int $statusCode,
         public readonly ?string $hubspotContactId,
+        public readonly ?string $resolvedVia = null,
     ) {}
 }

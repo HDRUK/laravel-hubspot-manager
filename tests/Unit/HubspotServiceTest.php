@@ -9,6 +9,9 @@ use Illuminate\Support\Facades\Http;
 
 class HubspotServiceTest extends TestCase
 {
+    /**
+     * @return array<string, mixed>
+     */
     private function validConfig(): array
     {
         return [
@@ -21,6 +24,30 @@ class HubspotServiceTest extends TestCase
     {
         config($this->validConfig());
         return new Hubspot();
+    }
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // An unfaked URL in an Http::fake() array is passed through to the
+        // real network, so a test that misses one would call HubSpot.
+        Http::preventStrayRequests();
+    }
+
+    public function test_surrounding_whitespace_is_stripped_from_the_base_url(): void
+    {
+        config($this->validConfig());
+        config(['hubspotmanager.default.access.hubspot_base_url' => " https://api.hubapi.com\n"]);
+
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => '12345'], 201),
+        ]);
+
+        (new Hubspot())->createContact(['email' => 'jane@example.com']);
+
+        Http::assertSent(fn ($request) =>
+            $request->url() === 'https://api.hubapi.com/crm/v3/objects/contacts');
     }
 
     public function test_create_contact_posts_properties_and_returns_array(): void
@@ -91,6 +118,121 @@ class HubspotServiceTest extends TestCase
             && str_contains($request->url(), '/crm/v3/objects/contacts/12345')
             && $request->data()['properties']['firstname'] === 'Jane'
         );
+    }
+
+    public function test_find_contact_id_by_returns_the_id_of_a_matching_contact(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response([
+                'id' => '12345',
+                'properties' => ['email' => 'jane@example.com'],
+            ], 200),
+        ]);
+
+        $result = $this->hubspot()->findContactIdBy('email', 'jane@example.com');
+
+        $this->assertSame('12345', $result);
+    }
+
+    public function test_find_contact_id_by_looks_up_the_unique_property_excluding_archived(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response(['id' => '12345'], 200),
+        ]);
+
+        $this->hubspot()->findContactIdBy('email', 'jane@example.com');
+
+        Http::assertSent(fn ($request) =>
+            $request->method() === 'GET'
+            && str_contains($request->url(), '/contacts/jane%40example.com')
+            && str_contains($request->url(), 'idProperty=email')
+            && str_contains($request->url(), 'archived=false')
+        );
+    }
+
+    public function test_find_contact_id_by_returns_null_when_no_contact_holds_the_value(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response([
+                'message' => 'resource not found',
+            ], 404),
+        ]);
+
+        $this->assertNull($this->hubspot()->findContactIdBy('email', 'nobody@example.com'));
+    }
+
+    public function test_find_contact_id_by_throws_on_other_failures(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/*' => Http::response([
+                'message' => 'internal error',
+            ], 500),
+        ]);
+
+        $this->expectException(HubspotApiException::class);
+
+        $this->hubspot()->findContactIdBy('email', 'jane@example.com');
+    }
+
+    /**
+     * Verbatim from a real duplicate create against a HubSpot portal (with 
+     * modified values to avoid exposure of real information), which
+     * answered HTTP 409. Anything derived from HubSpot's wording is
+     * tested here so a change to it fails as a specific test rather than as
+     * silently duplicated contacts.
+     *
+     * @return array<string, string>
+     */
+    private function realConflictBody(): array
+    {
+        return [
+            'status'        => 'error',
+            'message'       => 'Contact already exists. Existing ID: 247895748263',
+            'correlationId' => '01a10086-5ee9-70aa-8e3a-5d3edd17fe3c',
+            'category'      => 'CONFLICT',
+        ];
+    }
+
+    public function test_a_real_duplicate_conflict_exposes_the_existing_contact(): void
+    {
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response($this->realConflictBody(), 409),
+        ]);
+
+        try {
+            $this->hubspot()->createContact(['email' => 'jane@example.com']);
+            $this->fail('Expected a conflict.');
+        } catch (HubspotApiException $e) {
+            $this->assertTrue($e->isConflict());
+            $this->assertSame('247895748263', $e->existingContactId());
+            $this->assertSame('CONFLICT', $e->response['category']);
+        }
+    }
+
+    public function test_a_conflict_is_recognised_by_category_alone(): void
+    {
+        $exception = new HubspotApiException(
+            'Contact already exists. Existing ID: 247895748263',
+            400,
+            $this->realConflictBody(),
+        );
+
+        $this->assertSame('247895748263', $exception->existingContactId());
+    }
+
+    public function test_a_conflict_without_an_id_exposes_nothing(): void
+    {
+        $exception = new HubspotApiException('Contact already exists.', 409);
+
+        $this->assertNull($exception->existingContactId());
+    }
+
+    public function test_a_non_conflict_failure_exposes_nothing(): void
+    {
+        $exception = new HubspotApiException('Contact already exists. Existing ID: 247895748263', 400);
+
+        $this->assertFalse($exception->isConflict());
+        $this->assertNull($exception->existingContactId());
     }
 
     public function test_delete_contact_returns_true_on_success(): void

@@ -3,6 +3,7 @@
 namespace Hdruk\LaravelHubspotManager\Services;
 
 use Illuminate\Http\Client\Response;
+use Illuminate\Http\Response as HttpStatus;
 use Illuminate\Support\Facades\Http;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
@@ -11,13 +12,14 @@ class Hubspot
 {
     protected string $baseUrl;
     protected string $contactsEndpoint;
+    /** @var array<string, string> */
     protected array $headers;
 
     public function __construct()
     {
         $this->validateConfiguration();
 
-        $this->baseUrl = rtrim(config('hubspotmanager.default.access.hubspot_base_url'), '/');
+        $this->baseUrl = rtrim(trim((string) config('hubspotmanager.default.access.hubspot_base_url')), '/');
         $this->contactsEndpoint = config('hubspotmanager.default.endpoints.contacts');
         $this->headers = [
             'Accept' => 'application/json',
@@ -26,6 +28,10 @@ class Hubspot
         ];
     }
 
+    /**
+     * @param  array<string, mixed>  $properties
+     * @return array<string, mixed>
+     */
     public function createContact(array $properties): array
     {
         $response = Http::withHeaders($this->headers)
@@ -38,6 +44,10 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * @param  list<string>  $properties
+     * @return array<string, mixed>
+     */
     public function getContact(string $contactId, array $properties = []): array
     {
         $query = $properties ? ['properties' => implode(',', $properties)] : [];
@@ -50,6 +60,10 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * @param  array<string, mixed>  $properties
+     * @return array<string, mixed>
+     */
     public function updateContact(string $contactId, array $properties): array
     {
         $response = Http::withHeaders($this->headers)
@@ -62,6 +76,38 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * The id of the contact holding this value for a unique property, or null
+     * when HubSpot holds no such contact.
+     *
+     * Uses retrieve-by-unique-property rather than the search API: search is
+     * eventually consistent, so a contact created moments ago may not be
+     * found, and it is rate limited an order of magnitude lower. This reads
+     * the record directly and answers 404 when there is none.
+     *
+     * Archived contacts are excluded. A contact in the recycling bin cannot
+     * be patched, and re-linking to one would hide the fact that HubSpot
+     * will treat the next create as a new record.
+     */
+    public function findContactIdBy(string $property, string $value): ?string
+    {
+        $response = Http::withHeaders($this->headers)
+            ->get("{$this->baseUrl}/{$this->contactsEndpoint}/" . rawurlencode($value), [
+                'idProperty' => $property,
+                'archived'   => 'false',
+            ]);
+
+        if ($response->status() === HttpStatus::HTTP_NOT_FOUND) {
+            return null;
+        }
+
+        $this->throwIfFailed($response);
+
+        $id = $response->json('id');
+
+        return is_scalar($id) ? (string) $id : null;
+    }
+
     public function deleteContact(string $contactId): bool
     {
         $response = Http::withHeaders($this->headers)
@@ -72,6 +118,10 @@ class Hubspot
         return true;
     }
 
+    /**
+     * @param  list<array<string, mixed>>  $contacts
+     * @return array<string, mixed>
+     */
     public function createContacts(array $contacts): array
     {
         $inputs = array_map(fn (array $props) => ['properties' => $props], $contacts);
@@ -86,6 +136,10 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * @param  list<array{id: string, properties: array<string, mixed>}>  $contacts
+     * @return array<string, mixed>
+     */
     public function updateContacts(array $contacts): array
     {
         $response = Http::withHeaders($this->headers)
@@ -98,6 +152,9 @@ class Hubspot
         return $response->json();
     }
 
+    /**
+     * @param  list<string>  $contactIds
+     */
     public function deleteContacts(array $contactIds): bool
     {
         $inputs = array_map(fn (string $id) => ['id' => $id], $contactIds);
@@ -112,6 +169,11 @@ class Hubspot
         return true;
     }
 
+    /**
+     * @param  list<array{propertyName: string, operator: string, value?: mixed}>  $filters
+     * @param  list<string>  $properties
+     * @return array<string, mixed>
+     */
     public function searchContacts(array $filters, array $properties = []): array
     {
         $payload = ['filterGroups' => [['filters' => $filters]]];

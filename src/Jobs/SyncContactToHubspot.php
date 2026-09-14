@@ -5,11 +5,15 @@ namespace Hdruk\LaravelHubspotManager\Jobs;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\Response;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
+use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
+use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 
@@ -21,9 +25,20 @@ class SyncContactToHubspot implements ShouldQueue
 
     public function __construct(
         public readonly Model $model,
-        public readonly string $action,
-    ) {}
+        public readonly HubspotAction $action,
+    ) {
+        // Checked here rather than by the type, so that a model which cannot
+        // be synced fails where it is dispatched rather than part way through
+        // a queued job, without every consuming model having to declare an
+        // interface to say so.
+        if (!method_exists($model, 'toHubspotProperties')) {
+            throw HubspotConfigurationException::notContactable($model::class);
+        }
+    }
 
+    /**
+     * @return list<int>
+     */
     public function backoff(): array
     {
         return [10, 60, 300];
@@ -35,30 +50,39 @@ class SyncContactToHubspot implements ShouldQueue
             return;
         }
 
-        $hubspotContactId = null;
-        $statusCode = 200;
+        $outcome = new SyncOutcome(null, SyncOutcome::NO_HTTP_STATUS);
         $error = null;
 
         try {
-            [$hubspotContactId, $statusCode] = match ($this->action) {
-                'create' => $this->handleCreate($hubspot),
-                'update' => $this->handleUpdate($hubspot),
-                'delete' => $this->handleDelete($hubspot),
+            $outcome = match ($this->action) {
+                HubspotAction::Create => $this->handleCreate($hubspot),
+                HubspotAction::Update => $this->handleUpdate($hubspot),
+                HubspotAction::Delete => $this->handleDelete($hubspot),
             };
-        } catch (HubspotApiException $e) {
-            $statusCode = $e->statusCode;
+        } catch (\Throwable $e) {
+            $outcome = new SyncOutcome(
+                null,
+                $e instanceof HubspotApiException ? $e->statusCode : SyncOutcome::NO_HTTP_STATUS,
+            );
             $error = $e->getMessage();
             throw $e;
         } finally {
             HubspotSyncLog::create([
                 'user_id'            => $this->model->getKey(),
-                'action'             => $this->action,
-                'status_code'        => $statusCode,
-                'hubspot_contact_id' => $hubspotContactId,
+                'action'             => $this->action->value,
+                'status_code'        => $outcome->statusCode,
+                'hubspot_contact_id' => $outcome->contactId,
+                'resolved_via'       => $outcome->resolvedVia,
                 'error'              => $error,
             ]);
 
-            event(new HubspotContactSynced($this->model, $this->action, $statusCode, $hubspotContactId));
+            event(new HubspotContactSynced(
+                $this->model,
+                $this->action->value,
+                $outcome->statusCode,
+                $outcome->contactId,
+                $outcome->resolvedVia,
+            ));
         }
     }
 
@@ -66,68 +90,154 @@ class SyncContactToHubspot implements ShouldQueue
     {
         HubspotSyncLog::create([
             'user_id'            => $this->model->getKey(),
-            'action'             => $this->action,
-            'status_code'        => $exception instanceof HubspotApiException ? $exception->statusCode : 0,
+            'action'             => $this->action->value,
+            'status_code'        => $exception instanceof HubspotApiException
+                ? $exception->statusCode
+                : SyncOutcome::NO_HTTP_STATUS,
             'hubspot_contact_id' => null,
             'error'              => 'All retries exhausted: ' . $exception->getMessage(),
         ]);
     }
 
-    private function handleCreate(Hubspot $hubspot): array
+    private function handleCreate(Hubspot $hubspot): SyncOutcome
     {
-        $existingContactId = $this->resolveHubspotContactId();
+        $existingContactId = HubspotContact::contactIdForUser($this->model->getKey());
 
-        if ($existingContactId) {
+        if ($existingContactId !== null) {
             $hubspot->updateContact($existingContactId, $this->properties());
-            return [$existingContactId, 200];
+            return new SyncOutcome($existingContactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
         }
 
-        $response = $hubspot->createContact($this->properties());
-
-        return [$response['id'] ?? null, 201];
+        return $this->adoptOrCreate($hubspot);
     }
 
-    private function handleUpdate(Hubspot $hubspot): array
+    private function handleUpdate(Hubspot $hubspot): SyncOutcome
     {
-        $contactId = $this->resolveHubspotContactId();
+        $contactId = HubspotContact::contactIdForUser($this->model->getKey());
 
-        if (!$contactId) {
-            $response = $hubspot->createContact($this->properties());
-            return [$response['id'] ?? null, 201];
+        if ($contactId === null) {
+            return $this->adoptOrCreate($hubspot);
         }
 
         $hubspot->updateContact($contactId, $this->properties());
 
-        return [$contactId, 200];
+        return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
     }
 
-    private function handleDelete(Hubspot $hubspot): array
+    private function handleDelete(Hubspot $hubspot): SyncOutcome
     {
-        $contactId = $this->resolveHubspotContactId();
+        $contactId = HubspotContact::contactIdForUser($this->model->getKey());
 
-        if ($contactId) {
-            $hubspot->deleteContact($contactId);
+        if ($contactId === null) {
+            return new SyncOutcome(null, Response::HTTP_NO_CONTENT);
         }
 
-        return [null, 204];
+        $hubspot->deleteContact($contactId);
+        HubspotContact::archive($this->model->getKey());
+
+        return new SyncOutcome($contactId, Response::HTTP_NO_CONTENT, SyncOutcome::VIA_LINK);
     }
 
+    /**
+     * No stored link, so ask HubSpot whether it already holds this contact
+     * before creating a second one. A contact can predate this package, or
+     * predate the model, and creating alongside it would leave two records
+     * for one person with no way to tell which is current.
+     */
+    private function adoptOrCreate(Hubspot $hubspot): SyncOutcome
+    {
+        $contactId = $this->findExistingContactId($hubspot);
+
+        if ($contactId === null) {
+            return $this->createAndLink($hubspot);
+        }
+
+        $hubspot->updateContact($contactId, $this->properties());
+        HubspotContact::linkToUser($this->model->getKey(), $contactId);
+
+        return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LOOKUP);
+    }
+
+    /**
+     * Contacts are looked up by email, which is the property HubSpot itself
+     * dedupes on and the only one guaranteed to identify a contact.
+     *
+     * An address that is absent, non-scalar or blank once trimmed yields no
+     * lookup at all. Asking HubSpot to match an empty value matches an
+     * arbitrary contact, and this model would adopt a stranger's record.
+     */
+    private function findExistingContactId(Hubspot $hubspot): ?string
+    {
+        $email = $this->properties()['email'] ?? null;
+
+        if (!is_scalar($email)) {
+            return null;
+        }
+
+        $email = trim((string) $email);
+
+        return $email === '' ? null : $hubspot->findContactIdBy('email', $email);
+    }
+
+    /**
+     * Linked only after HubSpot has confirmed the id, so a failed create
+     * leaves the model unlinked and the next sync retries it.
+     */
+    private function createAndLink(Hubspot $hubspot): SyncOutcome
+    {
+        try {
+            $response = $hubspot->createContact($this->properties());
+        } catch (HubspotApiException $e) {
+            return $this->adoptConflictingContact($hubspot, $e);
+        }
+
+        $contactId = $response['id'] ?? null;
+
+        if ($contactId !== null) {
+            HubspotContact::linkToUser($this->model->getKey(), (string) $contactId);
+        }
+
+        return new SyncOutcome(is_scalar($contactId) ? (string) $contactId : null, Response::HTTP_CREATED, SyncOutcome::VIA_CREATED);
+    }
+
+    /**
+     * The last line against duplicates. The lookup can miss — two workers
+     * racing on the same model, or a contact created between the lookup and
+     * the create — and HubSpot then rejects the create as a duplicate and
+     * names the contact holding that email. Adopting it is the only outcome
+     * that does not leave two records for one person.
+     *
+     * Any other failure, including a conflict whose message carries no id,
+     * is rethrown rather than guessed at.
+     */
+    private function adoptConflictingContact(Hubspot $hubspot, HubspotApiException $e): SyncOutcome
+    {
+        $contactId = $e->existingContactId();
+
+        if ($contactId === null) {
+            throw $e;
+        }
+
+        $hubspot->updateContact($contactId, $this->properties());
+        HubspotContact::linkToUser($this->model->getKey(), $contactId);
+
+        return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_CONFLICT);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
     private function properties(): array
     {
-        $properties = $this->model->toHubspotProperties();
+        // Guaranteed to exist by the constructor; the analyser cannot see a
+        // method that consuming models supply via the trait.
+        // @phpstan-ignore method.notFound
+        $properties = (array) $this->model->toHubspotProperties();
 
         if ($productName = config('hubspotmanager.default.product_name')) {
             $properties['product_name'] = $productName;
         }
 
         return $properties;
-    }
-
-    private function resolveHubspotContactId(): ?string
-    {
-        return HubspotSyncLog::where('user_id', $this->model->getKey())
-            ->whereNotNull('hubspot_contact_id')
-            ->latest()
-            ->value('hubspot_contact_id');
     }
 }

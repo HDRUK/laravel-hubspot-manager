@@ -1,0 +1,21 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    # Level 8 adds nullability checks on method calls and property access,
+    # which is what catches the class of bug this package is most exposed to:
+    # acting on a contact link that resolved to null. Level 9 additionally
+    # rejects every use of mixed, which here means validating the shape of
+    # HubSpot's JSON responses rather than trusting them — worth doing, but
+    # as its own change.
+    level: 8
+
+    paths:
+        - src
+        - tests
+
+    excludePaths:
+        # Published config, not code: env() is correct here, and larastan's
+        # noEnvCallsOutsideOfConfig rule expects to find it in a directory
+        # literally named config/.
+        - src/config/hubspotmanager.php

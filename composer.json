@@ -29,10 +29,16 @@
     },
     "require-dev": {
         "orchestra/testbench": "^8.0 || ^9.0 || ^10.0",
-        "phpunit/phpunit": "^10.0 || ^11.0"
+        "phpunit/phpunit": "^10.0 || ^11.0",
+        "larastan/larastan": "^2.0 || ^3.0"
     },
     "scripts": {
-        "test": "vendor/bin/phpunit"
+        "test": "vendor/bin/phpunit",
+        "analyse": "phpstan analyse --memory-limit=1G",
+        "check": [
+            "@analyse",
+            "@test"
+        ]
     },
     "extra": {
         "laravel": {
