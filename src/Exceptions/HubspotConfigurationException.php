@@ -14,6 +14,14 @@ class HubspotConfigurationException extends RuntimeException
         );
     }
 
+    public static function unkeyed(string $class): self
+    {
+        return new self(
+            "Laravel HubSpot Manager: model [{$class}] cannot be synced because it has no "
+            . "int or string primary key. Sync a model only once it has been saved."
+        );
+    }
+
     public static function missingKey(string $key): self
     {
         return new self(

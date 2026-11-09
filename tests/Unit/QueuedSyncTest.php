@@ -94,4 +94,27 @@ class QueuedSyncTest extends TestCase
         $this->assertSame('delete', $log->action);
         $this->assertSame('hs-001', $log->hubspot_contact_id);
     }
+
+    public function test_a_queued_job_sends_the_model_as_it_was_when_dispatched(): void
+    {
+        Bus::fake([SyncContactToHubspot::class]);
+
+        $user = SyncableUser::create(['email' => 'jane@example.com']);
+        HubspotContact::linkToUser($user->id, 'hs-001');
+
+        $user->update(['email' => 'jane.new@example.com']);
+        $job = $this->lastDispatchedJob();
+
+        // Changed again before the worker runs, without firing model events.
+        SyncableUser::query()->whereKey($user->id)->update(['email' => 'jane.later@example.com']);
+
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
+        ]);
+
+        $this->runAsWorker($job);
+
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+            && ($r->data()['properties']['email'] ?? null) === 'jane.new@example.com');
+    }
 }

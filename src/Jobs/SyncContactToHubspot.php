@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Response;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\SerializesModels;
 use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
@@ -17,14 +16,27 @@ use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 
+/**
+ * Syncs one model to HubSpot from a snapshot taken when it was dispatched.
+ *
+ * The job holds no model. A queued model is stored as a class and key and
+ * reloaded by the worker. Taking the key and properties up front fixes what 
+ * is sent at the moment of the change, and the payload is plain data that 
+ * survives the queue unchanged.
+ */
 class SyncContactToHubspot implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable;
 
     public int $tries = 3;
 
+    public readonly int|string $userId;
+
+    /** @var array<string, mixed> */
+    public readonly array $properties;
+
     public function __construct(
-        public readonly Model $model,
+        Model $model,
         public readonly HubspotAction $action,
     ) {
         // Checked here rather than by the type, so that a model which cannot
@@ -34,6 +46,32 @@ class SyncContactToHubspot implements ShouldQueue
         if (!method_exists($model, 'toHubspotProperties')) {
             throw HubspotConfigurationException::notContactable($model::class);
         }
+
+        $key = $model->getKey();
+
+        if (!is_int($key) && !is_string($key)) {
+            throw HubspotConfigurationException::unkeyed($model::class);
+        }
+
+        $this->userId = $key;
+        $this->properties = self::snapshotProperties($model);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function snapshotProperties(Model $model): array
+    {
+        // Guaranteed to exist by the constructor; the analyser cannot see a
+        // method that consuming models supply via the trait.
+        // @phpstan-ignore method.notFound
+        $properties = (array) $model->toHubspotProperties();
+
+        if ($productName = config('hubspotmanager.default.product_name')) {
+            $properties['product_name'] = $productName;
+        }
+
+        return $properties;
     }
 
     /**
@@ -68,7 +106,7 @@ class SyncContactToHubspot implements ShouldQueue
             throw $e;
         } finally {
             HubspotSyncLog::create([
-                'user_id'            => $this->model->getKey(),
+                'user_id'            => $this->userId,
                 'action'             => $this->action->value,
                 'status_code'        => $outcome->statusCode,
                 'hubspot_contact_id' => $outcome->contactId,
@@ -77,7 +115,7 @@ class SyncContactToHubspot implements ShouldQueue
             ]);
 
             event(new HubspotContactSynced(
-                $this->model,
+                $this->userId,
                 $this->action->value,
                 $outcome->statusCode,
                 $outcome->contactId,
@@ -89,7 +127,7 @@ class SyncContactToHubspot implements ShouldQueue
     public function failed(\Throwable $exception): void
     {
         HubspotSyncLog::create([
-            'user_id'            => $this->model->getKey(),
+            'user_id'            => $this->userId,
             'action'             => $this->action->value,
             'status_code'        => $exception instanceof HubspotApiException
                 ? $exception->statusCode
@@ -101,10 +139,10 @@ class SyncContactToHubspot implements ShouldQueue
 
     private function handleCreate(Hubspot $hubspot): SyncOutcome
     {
-        $existingContactId = HubspotContact::contactIdForUser($this->model->getKey());
+        $existingContactId = HubspotContact::contactIdForUser($this->userId);
 
         if ($existingContactId !== null) {
-            $hubspot->updateContact($existingContactId, $this->properties());
+            $hubspot->updateContact($existingContactId, $this->properties);
             return new SyncOutcome($existingContactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
         }
 
@@ -113,27 +151,27 @@ class SyncContactToHubspot implements ShouldQueue
 
     private function handleUpdate(Hubspot $hubspot): SyncOutcome
     {
-        $contactId = HubspotContact::contactIdForUser($this->model->getKey());
+        $contactId = HubspotContact::contactIdForUser($this->userId);
 
         if ($contactId === null) {
             return $this->adoptOrCreate($hubspot);
         }
 
-        $hubspot->updateContact($contactId, $this->properties());
+        $hubspot->updateContact($contactId, $this->properties);
 
         return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
     }
 
     private function handleDelete(Hubspot $hubspot): SyncOutcome
     {
-        $contactId = HubspotContact::contactIdForUser($this->model->getKey());
+        $contactId = HubspotContact::contactIdForUser($this->userId);
 
         if ($contactId === null) {
             return new SyncOutcome(null, Response::HTTP_NO_CONTENT);
         }
 
         $hubspot->deleteContact($contactId);
-        HubspotContact::archive($this->model->getKey());
+        HubspotContact::archive($this->userId);
 
         return new SyncOutcome($contactId, Response::HTTP_NO_CONTENT, SyncOutcome::VIA_LINK);
     }
@@ -152,8 +190,8 @@ class SyncContactToHubspot implements ShouldQueue
             return $this->createAndLink($hubspot);
         }
 
-        $hubspot->updateContact($contactId, $this->properties());
-        HubspotContact::linkToUser($this->model->getKey(), $contactId);
+        $hubspot->updateContact($contactId, $this->properties);
+        HubspotContact::linkToUser($this->userId, $contactId);
 
         return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LOOKUP);
     }
@@ -168,7 +206,7 @@ class SyncContactToHubspot implements ShouldQueue
      */
     private function findExistingContactId(Hubspot $hubspot): ?string
     {
-        $email = $this->properties()['email'] ?? null;
+        $email = $this->properties['email'] ?? null;
 
         if (!is_scalar($email)) {
             return null;
@@ -186,7 +224,7 @@ class SyncContactToHubspot implements ShouldQueue
     private function createAndLink(Hubspot $hubspot): SyncOutcome
     {
         try {
-            $response = $hubspot->createContact($this->properties());
+            $response = $hubspot->createContact($this->properties);
         } catch (HubspotApiException $e) {
             return $this->adoptConflictingContact($hubspot, $e);
         }
@@ -194,7 +232,7 @@ class SyncContactToHubspot implements ShouldQueue
         $contactId = $response['id'] ?? null;
 
         if ($contactId !== null) {
-            HubspotContact::linkToUser($this->model->getKey(), (string) $contactId);
+            HubspotContact::linkToUser($this->userId, (string) $contactId);
         }
 
         return new SyncOutcome(is_scalar($contactId) ? (string) $contactId : null, Response::HTTP_CREATED, SyncOutcome::VIA_CREATED);
@@ -218,26 +256,9 @@ class SyncContactToHubspot implements ShouldQueue
             throw $e;
         }
 
-        $hubspot->updateContact($contactId, $this->properties());
-        HubspotContact::linkToUser($this->model->getKey(), $contactId);
+        $hubspot->updateContact($contactId, $this->properties);
+        HubspotContact::linkToUser($this->userId, $contactId);
 
         return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_CONFLICT);
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function properties(): array
-    {
-        // Guaranteed to exist by the constructor; the analyser cannot see a
-        // method that consuming models supply via the trait.
-        // @phpstan-ignore method.notFound
-        $properties = (array) $this->model->toHubspotProperties();
-
-        if ($productName = config('hubspotmanager.default.product_name')) {
-            $properties['product_name'] = $productName;
-        }
-
-        return $properties;
     }
 }

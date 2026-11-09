@@ -2,15 +2,16 @@
 
 namespace Hdruk\LaravelHubspotManager\Events;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Queue\SerializesModels;
-
+/**
+ * Fired after every sync attempt, successful or not.
+ *
+ * Carries the synced model's key rather than the model, so that deleted 
+ * models can be handled.
+ */
 class HubspotContactSynced
 {
-    use SerializesModels;
-
     public function __construct(
-        public readonly Model $model,
+        public readonly int|string $userId,
         public readonly string $action,
         public readonly int $statusCode,
         public readonly ?string $hubspotContactId,

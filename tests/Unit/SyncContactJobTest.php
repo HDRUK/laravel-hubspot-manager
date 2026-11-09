@@ -11,6 +11,7 @@ use Hdruk\LaravelHubspotManager\Jobs\SyncOutcome;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
+use Hdruk\LaravelHubspotManager\Tests\Fixtures\SyncableUser;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
@@ -475,7 +476,8 @@ class SyncContactJobTest extends TestCase
         $this->runJob('create');
 
         Event::assertDispatched(HubspotContactSynced::class, function (HubspotContactSynced $e) {
-            return $e->action === 'create'
+            return $e->userId === 1
+                && $e->action === 'create'
                 && $e->statusCode === 201
                 && $e->hubspotContactId === 'hs-001';
         });
@@ -540,6 +542,14 @@ class SyncContactJobTest extends TestCase
         $this->expectExceptionMessageMatches('/toHubspotProperties/');
 
         new SyncContactToHubspot($model, HubspotAction::Create);
+    }
+
+    public function test_a_model_without_a_key_is_rejected_at_dispatch(): void
+    {
+        $this->expectException(HubspotConfigurationException::class);
+        $this->expectExceptionMessageMatches('/primary key/');
+
+        new SyncContactToHubspot(new SyncableUser(['email' => 'jane@example.com']), HubspotAction::Create);
     }
 
     public function test_a_model_using_only_the_trait_is_adopted_by_lookup(): void
