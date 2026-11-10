@@ -6,6 +6,7 @@ use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
+use Hdruk\LaravelHubspotManager\Tests\Fixtures\DetachableUser;
 use Hdruk\LaravelHubspotManager\Tests\Fixtures\SyncableUser;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
 use Illuminate\Database\Schema\Blueprint;
@@ -93,6 +94,78 @@ class QueuedSyncTest extends TestCase
         $log = HubspotSyncLog::query()->latest('id')->firstOrFail();
         $this->assertSame('delete', $log->action);
         $this->assertSame('hs-001', $log->hubspot_contact_id);
+    }
+
+    public function test_a_deleted_model_that_clears_properties_keeps_its_contact(): void
+    {
+        Bus::fake([SyncContactToHubspot::class]);
+
+        $user = DetachableUser::create(['email' => 'jane@example.com']);
+        HubspotContact::linkToUser($user->id, 'hs-001');
+
+        $user->delete();
+
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
+        ]);
+
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        // Only the listed properties, blanked: nothing else about the contact
+        // is rewritten, and the contact itself is not archived.
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+            && str_contains($r->url(), 'hs-001')
+            && $r->data() === ['properties' => ['registry_development' => '', 'registry_persona' => '']]);
+        Http::assertNotSent(fn ($r) => $r->method() === 'DELETE');
+
+        $this->assertNull(HubspotContact::contactIdForUser($user->id));
+
+        $log = HubspotSyncLog::query()->latest('id')->firstOrFail();
+        $this->assertSame('delete', $log->action);
+        $this->assertSame(200, $log->status_code);
+        $this->assertSame('hs-001', $log->hubspot_contact_id);
+    }
+
+    public function test_a_deleted_model_that_clears_properties_sends_nothing_when_unlinked(): void
+    {
+        Bus::fake([SyncContactToHubspot::class]);
+
+        $user = DetachableUser::create(['email' => 'jane@example.com']);
+
+        $user->delete();
+
+        Http::fake();
+
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        Http::assertNothingSent();
+    }
+
+    /**
+     * Unlinking ends only the deleted model's link. The contact survives in
+     * HubSpot, so a new model for the same person finds it by email rather
+     * than creating a second contact.
+     */
+    public function test_a_model_readded_after_clearing_properties_adopts_the_surviving_contact(): void
+    {
+        Bus::fake([SyncContactToHubspot::class]);
+
+        Http::fake([
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['id' => 'hs-001'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
+        ]);
+
+        $deleted = DetachableUser::create(['email' => 'jane@example.com']);
+        HubspotContact::linkToUser($deleted->id, 'hs-001');
+        $deleted->delete();
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        $readded = DetachableUser::create(['email' => 'jane@example.com']);
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+        $this->assertSame('hs-001', HubspotContact::contactIdForUser($readded->id));
+        $this->assertNull(HubspotContact::contactIdForUser($deleted->id));
     }
 
     public function test_a_queued_job_sends_the_model_as_it_was_when_dispatched(): void

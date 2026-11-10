@@ -15,6 +15,7 @@ use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
+use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
 
 /**
  * Syncs one model to HubSpot from a snapshot taken when it was dispatched.
@@ -34,6 +35,8 @@ class SyncContactToHubspot implements ShouldQueue
 
     /** @var array<string, mixed> */
     public readonly array $properties;
+
+    public readonly OnHubspotDelete $onDelete;
 
     public function __construct(
         Model $model,
@@ -55,6 +58,18 @@ class SyncContactToHubspot implements ShouldQueue
 
         $this->userId = $key;
         $this->properties = self::snapshotProperties($model);
+        $this->onDelete = self::snapshotOnDelete($model);
+    }
+
+    /**
+     * A model that defines toHubspotProperties() without the trait has never
+     * declared a delete behaviour, so it keeps the one it has always had.
+     */
+    private static function snapshotOnDelete(Model $model): OnHubspotDelete
+    {
+        return method_exists($model, 'onHubspotDelete')
+            ? $model->onHubspotDelete()
+            : OnHubspotDelete::archiveContact();
     }
 
     /**
@@ -170,10 +185,24 @@ class SyncContactToHubspot implements ShouldQueue
             return new SyncOutcome(null, Response::HTTP_NO_CONTENT);
         }
 
-        $hubspot->deleteContact($contactId);
-        HubspotContact::archive($this->userId);
+        $propertiesToClear = $this->onDelete->propertiesToClear;
 
-        return new SyncOutcome($contactId, Response::HTTP_NO_CONTENT, SyncOutcome::VIA_LINK);
+        if ($propertiesToClear === null) {
+            $hubspot->deleteContact($contactId);
+            HubspotContact::unlink($this->userId);
+
+            return new SyncOutcome($contactId, Response::HTTP_NO_CONTENT, SyncOutcome::VIA_LINK);
+        }
+
+        // HubSpot clears a property set to an empty string. Only the listed
+        // properties are sent, so nothing else on a shared contact is
+        // rewritten from a model that no longer exists.
+        $hubspot->updateContact($contactId, array_fill_keys($propertiesToClear, ''));
+
+        // The contact lives on, but this model no longer has a link to it.
+        HubspotContact::unlink($this->userId);
+
+        return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
     }
 
     /**

@@ -77,12 +77,12 @@ class SyncContactJobTest extends TestCase
         return new Hubspot();
     }
 
-    private function seedLink(string $contactId = 'hs-001', ?string $archivedAt = null, int $userId = 1): void
+    private function seedLink(string $contactId = 'hs-001', ?string $unlinkedAt = null, int $userId = 1): void
     {
         HubspotContact::create([
             'user_id'            => $userId,
             'hubspot_contact_id' => $contactId,
-            'archived_at'        => $archivedAt,
+            'unlinked_at'        => $unlinkedAt,
         ]);
     }
 
@@ -380,7 +380,7 @@ class SyncContactJobTest extends TestCase
 
     public function test_update_creates_a_new_contact_after_a_successful_delete(): void
     {
-        $this->seedLink('hs-001', archivedAt: '2026-01-01 00:00:00');
+        $this->seedLink('hs-001', unlinkedAt: '2026-01-01 00:00:00');
 
         $this->fakeHubspot([
             'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
@@ -430,7 +430,7 @@ class SyncContactJobTest extends TestCase
         $this->assertSame('hs-001', $log->hubspot_contact_id);
 
         $this->assertNull(HubspotContact::contactIdForUser(1));
-        $this->assertNotNull(HubspotContact::query()->firstOrFail()->archived_at);
+        $this->assertNotNull(HubspotContact::query()->firstOrFail()->unlinked_at);
     }
 
     public function test_delete_skips_api_when_the_model_was_never_linked(): void
@@ -442,9 +442,9 @@ class SyncContactJobTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_delete_skips_api_when_the_contact_is_already_archived(): void
+    public function test_delete_skips_api_when_the_model_is_already_unlinked(): void
     {
-        $this->seedLink('hs-001', archivedAt: '2026-01-01 00:00:00');
+        $this->seedLink('hs-001', unlinkedAt: '2026-01-01 00:00:00');
 
         $this->fakeHubspot();
 

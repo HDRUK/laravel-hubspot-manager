@@ -72,6 +72,23 @@ public function toHubspotProperties(): array
 }
 ```
 
+### What deleting a model does
+
+By default, deleting a model **archives** its HubSpot contact.
+
+A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. Deleting the model in one of them does not mean the person is gone. Override `onHubspotDelete()` to blank only the properties this model owns and leave the contact in place:
+
+```php
+use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
+
+public function onHubspotDelete(): OnHubspotDelete
+{
+    return OnHubspotDelete::clearProperties('my_system_flag', 'my_system_role');
+}
+```
+
+The listed properties are set to empty, and no other property on the contact is sent. `clearProperties()` needs at least one property name; to archive, return `OnHubspotDelete::archiveContact()` (the default).
+
 ### How a model is matched to a HubSpot contact
 
 Once a model has been synced, the link between it and its HubSpot contact is stored in the `hubspot_contacts` table, so updates and deletes target the correct record without any extra configuration. Installs that predate this table have their links backfilled from `hubspot_sync_logs` when the migration runs.
@@ -128,7 +145,7 @@ $hubspot = app(\Hdruk\LaravelHubspotManager\Services\Hubspot::class);
 Every sync attempt — successful or not — is recorded in the `hubspot_sync_logs` table.
 
 | Column               | Description                                       |
-|----------------------|---------------------------------------------------|
+| -------------------- | ------------------------------------------------- |
 | `user_id`            | Primary key of the synced model                   |
 | `action`             | `create`, `update`, or `delete`                   |
 | `status_code`        | HTTP status returned by HubSpot                   |
@@ -162,9 +179,9 @@ The `hubspot_contacts` table holds the current link between a model and its HubS
 | -------------------- | -------------------------------------------------------------------------- |
 | `user_id`            | Primary key of the synced model, unique                                    |
 | `hubspot_contact_id` | The HubSpot contact this model is linked to                                |
-| `archived_at`        | Set when the contact is archived in HubSpot, `null` while the link is live |
+| `unlinked_at`        | Set when the link ends (the model was deleted), `null` while the link is live |
 
-Note that deleting a model **archives** its HubSpot contact — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
+Note that a model that archives on delete (the default, see [What deleting a model does](#what-deleting-a-model-does)) archives its HubSpot contact — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
 
 ## Events
 
