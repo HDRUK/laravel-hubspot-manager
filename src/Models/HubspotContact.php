@@ -10,14 +10,14 @@ use Illuminate\Database\Eloquent\Model;
  * One row per model, holding present state only. The history of how that
  * state was reached lives in HubspotSyncLog.
  *
- * contactIdForUser(), linkToUser() and archive() are the intended way to read and
+ * contactIdForUser(), linkToUser() and unlink() are the intended way to read and
  * change a link; each is a single statement, so concurrent queue workers
  * cannot interleave a read and a write and lose one of them.
  *
  * @property int $id
  * @property int $user_id
  * @property string $hubspot_contact_id
- * @property \Illuminate\Support\Carbon|null $archived_at
+ * @property \Illuminate\Support\Carbon|null $unlinked_at
  * @property \Illuminate\Support\Carbon|null $created_at
  * @property \Illuminate\Support\Carbon|null $updated_at
  */
@@ -27,25 +27,25 @@ class HubspotContact extends Model
     protected $fillable = [
         'user_id',
         'hubspot_contact_id',
-        'archived_at',
+        'unlinked_at',
     ];
 
     /** @var array<string, string> */
     protected $casts = [
-        'archived_at' => 'datetime',
+        'unlinked_at' => 'datetime',
     ];
 
     protected $table = 'hubspot_contacts';
 
     /**
      * The live HubSpot contact for a model, or null when it has never been
-     * linked or its contact has since been archived.
+     * linked or has since been unlinked.
      */
     public static function contactIdForUser(int|string $userId): ?string
     {
         return static::query()
             ->where('user_id', $userId)
-            ->whereNull('archived_at')
+            ->whereNull('unlinked_at')
             ->value('hubspot_contact_id');
     }
 
@@ -61,22 +61,28 @@ class HubspotContact extends Model
             [[
                 'user_id'            => $userId,
                 'hubspot_contact_id' => $contactId,
-                'archived_at'        => null,
+                'unlinked_at'        => null,
             ]],
             ['user_id'],
-            ['hubspot_contact_id', 'archived_at'],
+            ['hubspot_contact_id', 'unlinked_at'],
         );
     }
 
     /**
-     * Record that a model's HubSpot contact has been archived. The row is
-     * kept so the id remains visible, but it no longer resolves as live.
+     * Record that a model no longer has a live link to its HubSpot contact,
+     * typically because the model was deleted.
+     *
+     * Says nothing about the contact itself, which may have been archived in
+     * HubSpot or may live on with other properties because it is shared
+     * with other systems. The row is kept so the id remains visible, and
+     * unlinked_at records when the link ended. The row no longer resolves
+     * as live.
      */
-    public static function archive(int|string $userId): void
+    public static function unlink(int|string $userId): void
     {
         static::query()
             ->where('user_id', $userId)
-            ->whereNull('archived_at')
-            ->update(['archived_at' => now()]);
+            ->whereNull('unlinked_at')
+            ->update(['unlinked_at' => now()]);
     }
 }

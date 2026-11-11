@@ -54,7 +54,9 @@ class User extends Authenticatable
 }
 ```
 
-A model that defines no `toHubspotProperties()` is rejected where the job is constructed rather than failing partway through a queued job.
+A model that defines no `toHubspotProperties()`, or has no primary key yet, is rejected where the job is constructed rather than failing partway through a queued job.
+
+`toHubspotProperties()` is called when the job is dispatched, not when it runs. The job carries the model's key and properties as they were at the moment of the change, so a retry sends exactly what the first attempt sent, and a deleted model can still be synced. The `product_name` config is read at the same point. This also means `toHubspotProperties()` runs in the request that changed the model, so anything it reads (such as `app()->environment()`) comes from that request rather than from the queue worker.
 
 By default the trait maps `email`, `first_name` / `firstname`, and `last_name` / `lastname` to their HubSpot equivalents. Override `toHubspotProperties()` to customise the mapping:
 
@@ -69,6 +71,23 @@ public function toHubspotProperties(): array
     ];
 }
 ```
+
+### What deleting a model does
+
+By default, deleting a model **archives** its HubSpot contact.
+
+A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. Deleting the model in one of them does not mean the person is gone. Override `onHubspotDelete()` to blank only the properties this model owns and leave the contact in place:
+
+```php
+use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
+
+public function onHubspotDelete(): OnHubspotDelete
+{
+    return OnHubspotDelete::clearProperties('my_system_flag', 'my_system_role');
+}
+```
+
+The listed properties are set to empty, and no other property on the contact is sent. `clearProperties()` needs at least one property name; to archive, return `OnHubspotDelete::archiveContact()` (the default).
 
 ### How a model is matched to a HubSpot contact
 
@@ -126,7 +145,7 @@ $hubspot = app(\Hdruk\LaravelHubspotManager\Services\Hubspot::class);
 Every sync attempt — successful or not — is recorded in the `hubspot_sync_logs` table.
 
 | Column               | Description                                       |
-|----------------------|---------------------------------------------------|
+| -------------------- | ------------------------------------------------- |
 | `user_id`            | Primary key of the synced model                   |
 | `action`             | `create`, `update`, or `delete`                   |
 | `status_code`        | HTTP status returned by HubSpot                   |
@@ -160,9 +179,9 @@ The `hubspot_contacts` table holds the current link between a model and its HubS
 | -------------------- | -------------------------------------------------------------------------- |
 | `user_id`            | Primary key of the synced model, unique                                    |
 | `hubspot_contact_id` | The HubSpot contact this model is linked to                                |
-| `archived_at`        | Set when the contact is archived in HubSpot, `null` while the link is live |
+| `unlinked_at`        | Set when the link ends (the model was deleted), `null` while the link is live |
 
-Note that deleting a model **archives** its HubSpot contact — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
+Note that a model that archives on delete (the default, see [What deleting a model does](#what-deleting-a-model-does)) archives its HubSpot contact — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
 
 ## Events
 
@@ -172,7 +191,7 @@ Note that deleting a model **archives** its HubSpot contact — HubSpot's delete
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 
 Event::listen(HubspotContactSynced::class, function (HubspotContactSynced $event) {
-    // $event->model          — the Eloquent model that was synced
+    // $event->userId         — primary key of the model that was synced
     // $event->action         — 'create' | 'update' | 'delete'
     // $event->statusCode     — HTTP status code
     // $event->hubspotContactId — HubSpot contact ID (nullable)
