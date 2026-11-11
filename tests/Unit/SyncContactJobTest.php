@@ -194,18 +194,6 @@ class SyncContactJobTest extends TestCase
         $this->assertSame('hs-900', HubspotContact::contactIdForUser(1));
     }
 
-    public function test_a_model_with_no_identity_is_never_looked_up(): void
-    {
-        $this->fakeHubspot([
-            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
-        ]);
-
-        $this->runJob('create', $this->fakeModel(properties: ['firstname' => 'Jane']));
-
-        Http::assertNotSent(fn ($r) => $r->method() === 'GET');
-        Http::assertSent(fn ($r) => $r->method() === 'POST');
-    }
-
     public function test_a_linked_model_is_never_looked_up(): void
     {
         $this->seedLink('hs-001');
@@ -579,29 +567,64 @@ class SyncContactJobTest extends TestCase
     }
 
     /**
-     * @return array<string, array{mixed}>
+     * Every way toHubspotProperties() can fail to give an email, for each
+     * action that creates, finds or updates a contact by it.
+     *
+     * @return array<string, array{HubspotAction, array<string, mixed>}>
      */
-    public static function unusableEmails(): array
+    public static function syncsWithoutAnEmail(): array
     {
-        return [
-            'null'       => [null],
-            'empty'      => [''],
-            'whitespace' => ["  \t "],
-            'non scalar' => [['jane@example.com']],
+        $unusable = [
+            'missing'    => ['firstname' => 'Jane'],
+            'null'       => ['email' => null],
+            'empty'      => ['email' => ''],
+            'whitespace' => ['email' => "  \t "],
+            'non scalar' => ['email' => ['jane@example.com']],
         ];
+
+        $cases = [];
+
+        foreach ([HubspotAction::Create, HubspotAction::Update] as $action) {
+            foreach ($unusable as $name => $properties) {
+                $cases["{$action->value}, {$name}"] = [$action, $properties];
+            }
+        }
+
+        return $cases;
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('unusableEmails')]
-    public function test_an_unusable_email_is_never_looked_up(mixed $email): void
+    /**
+     * HubSpot identifies a contact by its email, and a consumer's email is
+     * never removed, so a sync without one is a fault in the consuming
+     * model. It fails where it is dispatched, not in a worker that would
+     * otherwise create a contact nothing can find again.
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('syncsWithoutAnEmail')]
+    public function test_a_sync_without_an_email_is_rejected_at_dispatch(HubspotAction $action, array $properties): void
     {
+        $this->expectException(HubspotConfigurationException::class);
+        $this->expectExceptionMessageMatches('/email/');
+
+        new SyncContactToHubspot($this->fakeModel(properties: $properties), $action);
+    }
+
+    /**
+     * A delete acts on the stored link and never looks the email up, so a
+     * model can always be deleted.
+     */
+    public function test_a_model_without_an_email_can_still_be_deleted(): void
+    {
+        $this->seedLink('hs-001');
+
         $this->fakeHubspot([
-            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(null, 204),
         ]);
 
-        $this->runJob('create', $this->fakeModel(properties: ['email' => $email]));
+        $this->runJob('delete', $this->fakeModel(properties: []));
 
-        Http::assertNotSent(fn ($r) => $r->method() === 'GET');
-        Http::assertSent(fn ($r) => $r->method() === 'POST');
+        Http::assertSent(fn ($r) => $r->method() === 'DELETE' && str_contains($r->url(), 'hs-001'));
     }
 
     public function test_product_name_is_included_in_properties_when_configured(): void

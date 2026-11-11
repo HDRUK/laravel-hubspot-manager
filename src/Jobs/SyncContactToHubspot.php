@@ -59,6 +59,33 @@ class SyncContactToHubspot implements ShouldQueue
         $this->userId = $key;
         $this->properties = self::snapshotProperties($model);
         $this->onDelete = self::snapshotOnDelete($model);
+
+        // A delete acts on the stored link alone. Every other action creates,
+        // finds or updates a contact by its email, and a consumer never
+        // removes one, so its absence is a fault in the model.
+        if ($action !== HubspotAction::Delete && self::emailIn($this->properties) === null) {
+            throw HubspotConfigurationException::missingEmail($model::class);
+        }
+    }
+
+    /**
+     * The email in a set of properties, trimmed, or null when it is absent,
+     * non-scalar or blank.
+     *
+     * @param  array<string, mixed>  $properties
+     * @return non-empty-string|null
+     */
+    private static function emailIn(array $properties): ?string
+    {
+        $email = $properties['email'] ?? null;
+
+        if (!is_scalar($email)) {
+            return null;
+        }
+
+        $email = trim((string) $email);
+
+        return $email === '' ? null : $email;
     }
 
     /**
@@ -229,21 +256,16 @@ class SyncContactToHubspot implements ShouldQueue
      * Contacts are looked up by email, which is the property HubSpot itself
      * dedupes on and the only one guaranteed to identify a contact.
      *
-     * An address that is absent, non-scalar or blank once trimmed yields no
-     * lookup at all. Asking HubSpot to match an empty value matches an
-     * arbitrary contact, and this model would adopt a stranger's record.
+     * The constructor has already rejected a create or update without a
+     * usable email. The null check remains because the analyser cannot see
+     * that, and because asking HubSpot to match an empty value matches an
+     * arbitrary contact, which this model would then adopt.
      */
     private function findExistingContactId(Hubspot $hubspot): ?string
     {
-        $email = $this->properties['email'] ?? null;
+        $email = self::emailIn($this->properties);
 
-        if (!is_scalar($email)) {
-            return null;
-        }
-
-        $email = trim((string) $email);
-
-        return $email === '' ? null : $hubspot->findContactIdBy('email', $email);
+        return $email === null ? null : $hubspot->findContactIdBy('email', $email);
     }
 
     /**

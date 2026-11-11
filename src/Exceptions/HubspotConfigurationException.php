@@ -22,6 +22,15 @@ class HubspotConfigurationException extends RuntimeException
         );
     }
 
+    public static function missingEmail(string $class): self
+    {
+        return new self(
+            "Laravel HubSpot Manager: model [{$class}] cannot be synced because "
+            . "toHubspotProperties() gave no email. HubSpot identifies a contact by its email, "
+            . "so a contact cannot be created, found or moved without one."
+        );
+    }
+
     public static function missingKey(string $key): self
     {
         return new self(

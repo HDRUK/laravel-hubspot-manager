@@ -103,7 +103,7 @@ Deletes never reach step 2. A model that this package has no link for will not a
 
 The lookup matches on `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts, and is not configurable for that reason. The address is read from `toHubspotProperties()`, so it keeps working when your local column is named differently.
 
-A model whose email is missing, blank, or non-scalar skips step 2 entirely and goes straight to create, because looking a contact up by an empty value would match an arbitrary record.
+A create or update whose email is missing, blank, or non-scalar is rejected where the job is constructed, with a `HubspotConfigurationException`. Without an email a contact cannot be found again, and looking one up by an empty value would match an arbitrary record. Deletes are exempt, since they act on the stored link alone.
 
 Note that the lookup matches on the model's **current** identity. If a contact exists in HubSpot under an old email address and the model's email has since changed, the lookup will not find it and a second contact is created.
 
