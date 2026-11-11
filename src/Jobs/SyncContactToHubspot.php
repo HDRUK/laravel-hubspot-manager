@@ -15,7 +15,9 @@ use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
+use Hdruk\LaravelHubspotManager\Support\ContactEmail;
 use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
+use LogicException;
 
 /**
  * Syncs one model to HubSpot from a snapshot taken when it was dispatched.
@@ -38,6 +40,9 @@ class SyncContactToHubspot implements ShouldQueue
 
     public readonly HubspotOwnership $ownership;
 
+    /** Null only for a delete, which does not need one. */
+    public readonly ?ContactEmail $email;
+
     public function __construct(
         Model $model,
         public readonly HubspotAction $action,
@@ -59,33 +64,25 @@ class SyncContactToHubspot implements ShouldQueue
         $this->userId = $key;
         $this->properties = self::snapshotProperties($model);
         $this->ownership = self::snapshotOwnership($model);
+        $this->email = ContactEmail::fromProperties($this->properties);
 
         // A delete acts on the stored link alone. Every other action creates,
         // finds or updates a contact by its email, and a consumer never
         // removes one, so its absence is a fault in the model.
-        if ($action !== HubspotAction::Delete && self::emailIn($this->properties) === null) {
+        if ($action !== HubspotAction::Delete && $this->email === null) {
             throw HubspotConfigurationException::missingEmail($model::class);
         }
     }
 
     /**
-     * The email in a set of properties, trimmed, or null when it is absent,
-     * non-scalar or blank.
-     *
-     * @param  array<string, mixed>  $properties
-     * @return non-empty-string|null
+     * The email for a create or update. The constructor rejects either
+     * without one, so this cannot be null; it exists to hand that guarantee
+     * on to the analyser, which cannot see it.
      */
-    private static function emailIn(array $properties): ?string
+    private function requiredEmail(): ContactEmail
     {
-        $email = $properties['email'] ?? null;
-
-        if (!is_scalar($email)) {
-            return null;
-        }
-
-        $email = trim((string) $email);
-
-        return $email === '' ? null : $email;
+        return $this->email
+            ?? throw new LogicException('A create or update without an email is rejected at dispatch.');
     }
 
     /**
@@ -189,7 +186,7 @@ class SyncContactToHubspot implements ShouldQueue
             return new SyncOutcome($existingContactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
         }
 
-        return $this->adoptOrCreate($hubspot);
+        return $this->adoptOrCreate($hubspot, $this->requiredEmail());
     }
 
     private function handleUpdate(Hubspot $hubspot): SyncOutcome
@@ -197,7 +194,7 @@ class SyncContactToHubspot implements ShouldQueue
         $contactId = HubspotContact::contactIdForUser($this->userId);
 
         if ($contactId === null) {
-            return $this->adoptOrCreate($hubspot);
+            return $this->adoptOrCreate($hubspot, $this->requiredEmail());
         }
 
         $hubspot->updateContact($contactId, $this->properties);
@@ -239,52 +236,36 @@ class SyncContactToHubspot implements ShouldQueue
      * predate the model, and creating alongside it would leave two records
      * for one person with no way to tell which is current.
      */
-    private function adoptOrCreate(Hubspot $hubspot): SyncOutcome
+    private function adoptOrCreate(Hubspot $hubspot, ContactEmail $email): SyncOutcome
     {
-        $contactId = $this->findExistingContactId($hubspot);
+        $contactId = $hubspot->findContactIdBy('email', $email->value);
 
         if ($contactId === null) {
-            return $this->createAndLink($hubspot);
+            return $this->createAndLink($hubspot, $email);
         }
 
         $hubspot->updateContact($contactId, $this->properties);
-        HubspotContact::linkToUser($this->userId, $contactId);
+        HubspotContact::linkToUser($this->userId, $contactId, $email);
 
         return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LOOKUP);
-    }
-
-    /**
-     * Contacts are looked up by email, which is the property HubSpot itself
-     * dedupes on and the only one guaranteed to identify a contact.
-     *
-     * The constructor has already rejected a create or update without a
-     * usable email. The null check remains because the analyser cannot see
-     * that, and because asking HubSpot to match an empty value matches an
-     * arbitrary contact, which this model would then adopt.
-     */
-    private function findExistingContactId(Hubspot $hubspot): ?string
-    {
-        $email = self::emailIn($this->properties);
-
-        return $email === null ? null : $hubspot->findContactIdBy('email', $email);
     }
 
     /**
      * Linked only after HubSpot has confirmed the id, so a failed create
      * leaves the model unlinked and the next sync retries it.
      */
-    private function createAndLink(Hubspot $hubspot): SyncOutcome
+    private function createAndLink(Hubspot $hubspot, ContactEmail $email): SyncOutcome
     {
         try {
             $response = $hubspot->createContact($this->properties);
         } catch (HubspotApiException $e) {
-            return $this->adoptConflictingContact($hubspot, $e);
+            return $this->adoptConflictingContact($hubspot, $e, $email);
         }
 
         $contactId = $response['id'] ?? null;
 
         if ($contactId !== null) {
-            HubspotContact::linkToUser($this->userId, (string) $contactId);
+            HubspotContact::linkToUser($this->userId, (string) $contactId, $email);
         }
 
         return new SyncOutcome(is_scalar($contactId) ? (string) $contactId : null, Response::HTTP_CREATED, SyncOutcome::VIA_CREATED);
@@ -300,7 +281,7 @@ class SyncContactToHubspot implements ShouldQueue
      * Any other failure, including a conflict whose message carries no id,
      * is rethrown rather than guessed at.
      */
-    private function adoptConflictingContact(Hubspot $hubspot, HubspotApiException $e): SyncOutcome
+    private function adoptConflictingContact(Hubspot $hubspot, HubspotApiException $e, ContactEmail $email): SyncOutcome
     {
         $contactId = $e->existingContactId();
 
@@ -309,7 +290,7 @@ class SyncContactToHubspot implements ShouldQueue
         }
 
         $hubspot->updateContact($contactId, $this->properties);
-        HubspotContact::linkToUser($this->userId, $contactId);
+        HubspotContact::linkToUser($this->userId, $contactId, $email);
 
         return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_CONFLICT);
     }

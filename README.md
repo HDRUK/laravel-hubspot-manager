@@ -105,7 +105,7 @@ When a model has no stored link, the package asks HubSpot whether it already hol
 
 Deletes never reach step 2. A model that this package has no link for will not archive a HubSpot contact it did not create.
 
-The lookup matches on `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts, and is not configurable for that reason. The address is read from `toHubspotProperties()`, so it keeps working when your local column is named differently.
+The lookup matches on `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts, and is not configurable for that reason. The address is read from `toHubspotProperties()`, so it keeps working when your local column is named differently. It is trimmed and lowercased before the lookup, and the same normalised email is stored with the link.
 
 A create or update whose email is missing, blank, or non-scalar is rejected where the job is constructed, with a `HubspotConfigurationException`. Without an email a contact cannot be found again, and looking one up by an empty value would match an arbitrary record. Deletes are exempt, since they act on the stored link alone.
 

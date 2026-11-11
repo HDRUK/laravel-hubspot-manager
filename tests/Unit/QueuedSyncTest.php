@@ -6,6 +6,7 @@ use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
+use Hdruk\LaravelHubspotManager\Support\ContactEmail;
 use Hdruk\LaravelHubspotManager\Tests\Fixtures\DetachableUser;
 use Hdruk\LaravelHubspotManager\Tests\Fixtures\SyncableUser;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
@@ -77,7 +78,7 @@ class QueuedSyncTest extends TestCase
         Bus::fake([SyncContactToHubspot::class]);
 
         $user = SyncableUser::create(['email' => 'jane@example.com']);
-        HubspotContact::linkToUser($user->id, 'hs-001');
+        HubspotContact::linkToUser($user->id, 'hs-001', ContactEmail::from('jane@example.com'));
 
         $user->delete();
 
@@ -101,7 +102,7 @@ class QueuedSyncTest extends TestCase
         Bus::fake([SyncContactToHubspot::class]);
 
         $user = DetachableUser::create(['email' => 'jane@example.com']);
-        HubspotContact::linkToUser($user->id, 'hs-001');
+        HubspotContact::linkToUser($user->id, 'hs-001', ContactEmail::from('jane@example.com'));
 
         $user->delete();
 
@@ -156,7 +157,7 @@ class QueuedSyncTest extends TestCase
         ]);
 
         $deleted = DetachableUser::create(['email' => 'jane@example.com']);
-        HubspotContact::linkToUser($deleted->id, 'hs-001');
+        HubspotContact::linkToUser($deleted->id, 'hs-001', ContactEmail::from('jane@example.com'));
         $deleted->delete();
         $this->runAsWorker($this->lastDispatchedJob());
 
@@ -173,7 +174,7 @@ class QueuedSyncTest extends TestCase
         Bus::fake([SyncContactToHubspot::class]);
 
         $user = SyncableUser::create(['email' => 'jane@example.com']);
-        HubspotContact::linkToUser($user->id, 'hs-001');
+        HubspotContact::linkToUser($user->id, 'hs-001', ContactEmail::from('jane@example.com'));
 
         $user->update(['email' => 'jane.new@example.com']);
         $job = $this->lastDispatchedJob();

@@ -141,6 +141,51 @@ class SyncContactJobTest extends TestCase
         $this->assertSame(1, HubspotContact::count());
     }
 
+    /**
+     * Every way a model comes to be linked records the email the link was
+     * made for, so a later sync can tell whether the email has changed.
+     *
+     * Responses are given as [body, status], since a data provider runs
+     * before the application, and Http::response(), exists.
+     *
+     * @return array<string, array{array<string, array{array<string, mixed>, int}>, string}>
+     */
+    public static function waysOfLinking(): array
+    {
+        return [
+            'created' => [[
+                'https://api.hubapi.com/crm/v3/objects/contacts' => [['id' => 'hs-001'], 201],
+            ], 'hs-001'],
+            'adopted by lookup' => [[
+                'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => [['id' => 'hs-900'], 200],
+                'https://api.hubapi.com/crm/v3/objects/contacts/hs-900'              => [['id' => 'hs-900'], 200],
+            ], 'hs-900'],
+            'adopted after a conflict' => [[
+                'https://api.hubapi.com/crm/v3/objects/contacts/777' => [['id' => '777'], 200],
+                'https://api.hubapi.com/crm/v3/objects/contacts'     => [[
+                    'message'  => 'Contact already exists. Existing ID: 777',
+                    'category' => 'CONFLICT',
+                ], 409],
+            ], '777'],
+        ];
+    }
+
+    /**
+     * @param  array<string, array{array<string, mixed>, int}>  $responses
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('waysOfLinking')]
+    public function test_a_link_records_the_email_it_was_made_for(array $responses, string $contactId): void
+    {
+        $this->fakeHubspot(array_map(fn (array $r) => Http::response($r[0], $r[1]), $responses));
+
+        $this->runJob('create', $this->fakeModel(properties: ['email' => ' Jane@Example.com']));
+
+        $link = HubspotContact::linkForUser(1);
+        $this->assertNotNull($link);
+        $this->assertSame($contactId, $link->contactId);
+        $this->assertSame('jane@example.com', $link->email?->value);
+    }
+
     public function test_create_adopts_an_existing_hubspot_contact_when_one_matches(): void
     {
         $this->fakeHubspot([
