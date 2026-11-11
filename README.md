@@ -72,22 +72,26 @@ public function toHubspotProperties(): array
 }
 ```
 
-### What deleting a model does
+### Sharing a contact with other systems
 
-By default, deleting a model **archives** its HubSpot contact.
-
-A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. Deleting the model in one of them does not mean the person is gone. Override `onHubspotDelete()` to blank only the properties this model owns and leave the contact in place:
+A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. By default a model is assumed to have its contact to itself. Override `hubspotOwnership()` to declare that it shares the contact, naming the properties it owns:
 
 ```php
-use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 
-public function onHubspotDelete(): OnHubspotDelete
+public function hubspotOwnership(): HubspotOwnership
 {
-    return OnHubspotDelete::clearProperties('my_system_flag', 'my_system_role');
+    return HubspotOwnership::shared('my_system_flag', 'my_system_role');
 }
 ```
 
-The listed properties are set to empty, and no other property on the contact is sent. `clearProperties()` needs at least one property name; to archive, return `OnHubspotDelete::archiveContact()` (the default).
+`shared()` needs at least one property name. To declare the default explicitly, return `HubspotOwnership::exclusive()`.
+
+### What deleting a model does
+
+Deleting an **exclusive** model archives its HubSpot contact.
+
+Deleting a **shared** model does not mean the person is gone. Its owned properties are set to empty, no other property on the contact is sent, and the contact stays in place for the other systems.
 
 ### How a model is matched to a HubSpot contact
 

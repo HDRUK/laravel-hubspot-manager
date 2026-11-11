@@ -2,7 +2,7 @@
 
 namespace Hdruk\LaravelHubspotManager\Tests\Fixtures;
 
-use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 use Illuminate\Database\Eloquent\Model;
 
@@ -43,8 +43,8 @@ class RegistryUser extends Model
         ]);
     }
 
-    public function onHubspotDelete(): OnHubspotDelete
+    public function hubspotOwnership(): HubspotOwnership
     {
-        return OnHubspotDelete::clearProperties('registry_development');
+        return HubspotOwnership::shared('registry_development');
     }
 }

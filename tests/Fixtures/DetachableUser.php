@@ -2,7 +2,7 @@
 
 namespace Hdruk\LaravelHubspotManager\Tests\Fixtures;
 
-use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 
 /**
  * A model that shares its HubSpot contact with other systems, so deleting it
@@ -10,8 +10,8 @@ use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
  */
 class DetachableUser extends SyncableUser
 {
-    public function onHubspotDelete(): OnHubspotDelete
+    public function hubspotOwnership(): HubspotOwnership
     {
-        return OnHubspotDelete::clearProperties('registry_development', 'registry_persona');
+        return HubspotOwnership::shared('registry_development', 'registry_persona');
     }
 }

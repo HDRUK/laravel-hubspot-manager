@@ -15,7 +15,7 @@ use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
-use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 
 /**
  * Syncs one model to HubSpot from a snapshot taken when it was dispatched.
@@ -36,7 +36,7 @@ class SyncContactToHubspot implements ShouldQueue
     /** @var array<string, mixed> */
     public readonly array $properties;
 
-    public readonly OnHubspotDelete $onDelete;
+    public readonly HubspotOwnership $ownership;
 
     public function __construct(
         Model $model,
@@ -58,7 +58,7 @@ class SyncContactToHubspot implements ShouldQueue
 
         $this->userId = $key;
         $this->properties = self::snapshotProperties($model);
-        $this->onDelete = self::snapshotOnDelete($model);
+        $this->ownership = self::snapshotOwnership($model);
 
         // A delete acts on the stored link alone. Every other action creates,
         // finds or updates a contact by its email, and a consumer never
@@ -90,13 +90,14 @@ class SyncContactToHubspot implements ShouldQueue
 
     /**
      * A model that defines toHubspotProperties() without the trait has never
-     * declared a delete behaviour, so it keeps the one it has always had.
+     * declared that it shares its contact, so it is treated as exclusive, as
+     * it always has been.
      */
-    private static function snapshotOnDelete(Model $model): OnHubspotDelete
+    private static function snapshotOwnership(Model $model): HubspotOwnership
     {
-        return method_exists($model, 'onHubspotDelete')
-            ? $model->onHubspotDelete()
-            : OnHubspotDelete::archiveContact();
+        return method_exists($model, 'hubspotOwnership')
+            ? $model->hubspotOwnership()
+            : HubspotOwnership::exclusive();
     }
 
     /**
@@ -212,19 +213,19 @@ class SyncContactToHubspot implements ShouldQueue
             return new SyncOutcome(null, Response::HTTP_NO_CONTENT);
         }
 
-        $propertiesToClear = $this->onDelete->propertiesToClear;
+        $ownedProperties = $this->ownership->ownedProperties;
 
-        if ($propertiesToClear === null) {
+        if ($ownedProperties === null) {
             $hubspot->deleteContact($contactId);
             HubspotContact::unlink($this->userId);
 
             return new SyncOutcome($contactId, Response::HTTP_NO_CONTENT, SyncOutcome::VIA_LINK);
         }
 
-        // HubSpot clears a property set to an empty string. Only the listed
+        // HubSpot clears a property set to an empty string. Only the owned
         // properties are sent, so nothing else on a shared contact is
         // rewritten from a model that no longer exists.
-        $hubspot->updateContact($contactId, array_fill_keys($propertiesToClear, ''));
+        $hubspot->updateContact($contactId, array_fill_keys($ownedProperties, ''));
 
         // The contact lives on, but this model no longer has a link to it.
         HubspotContact::unlink($this->userId);

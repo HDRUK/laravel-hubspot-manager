@@ -5,7 +5,7 @@ namespace Hdruk\LaravelHubspotManager\Traits;
 use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
-use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 trait HasHubspotContact
@@ -33,18 +33,18 @@ trait HasHubspotContact
     }
 
     /**
-     * What deleting this model does to its HubSpot contact. Called when the
-     * model is deleted, and carried with the queued job.
+     * Whether this model has its HubSpot contact to itself, or shares it with
+     * other systems and owns only some of its properties. Called whenever a
+     * sync is dispatched, and carried with the queued job.
      *
-     * Archives the contact by default. Override this in a model whose
-     * contact is shared with other systems to clear only the properties it
-     * owns instead:
+     * Exclusive by default. Override this in a model whose contact is shared
+     * with other systems, naming the properties it owns:
      *
-     *     return OnHubspotDelete::clearProperties('my_system_flag');
+     *     return HubspotOwnership::shared('my_system_flag');
      */
-    public function onHubspotDelete(): OnHubspotDelete
+    public function hubspotOwnership(): HubspotOwnership
     {
-        return OnHubspotDelete::archiveContact();
+        return HubspotOwnership::exclusive();
     }
 
     /**
