@@ -476,6 +476,69 @@ class SyncContactJobTest extends TestCase
         $this->assertNotNull(HubspotContact::query()->firstOrFail()->unlinked_at);
     }
 
+    /**
+     * A contact deleted or merged away in HubSpot after it was linked. The
+     * model is matched by email again, as on its first sync, rather than
+     * failing every sync from then on.
+     */
+    public function test_an_update_whose_linked_contact_is_gone_creates_one(): void
+    {
+        $this->seedLink('hs-gone');
+
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-gone' => Http::response(['message' => 'resource not found'], 404),
+            'https://api.hubapi.com/crm/v3/objects/contacts'         => Http::response(['id' => 'hs-002'], 201),
+        ]);
+
+        $this->runJob('update');
+
+        $this->assertSame('hs-002', HubspotContact::contactIdForUser(1));
+
+        $log = HubspotSyncLog::query()->latest('id')->firstOrFail();
+        $this->assertSame(201, $log->status_code);
+        $this->assertSame(SyncOutcome::VIA_CREATED, $log->resolved_via);
+    }
+
+    public function test_an_update_whose_linked_contact_is_gone_adopts_the_contact_holding_its_email(): void
+    {
+        $this->seedLink('hs-gone');
+
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-gone'             => Http::response(['message' => 'resource not found'], 404),
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['id' => 'hs-900'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-900'              => Http::response(['id' => 'hs-900'], 200),
+        ]);
+
+        $this->runJob('update');
+
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+        $this->assertSame('hs-900', HubspotContact::contactIdForUser(1));
+        $this->assertSame(
+            SyncOutcome::VIA_LOOKUP,
+            HubspotSyncLog::query()->latest('id')->firstOrFail()->resolved_via,
+        );
+    }
+
+    /**
+     * Nothing is left to blank, so the delete has done what it set out to.
+     */
+    public function test_a_delete_whose_linked_contact_is_gone_unlinks_without_failing(): void
+    {
+        $this->seedLink('hs-gone');
+
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-gone' => Http::response(['message' => 'resource not found'], 404),
+        ]);
+
+        $this->runJob('delete');
+
+        $this->assertNull(HubspotContact::contactIdForUser(1));
+
+        $log = HubspotSyncLog::query()->latest('id')->firstOrFail();
+        $this->assertTrue($log->wasSuccessful());
+        $this->assertNull($log->error);
+    }
+
     public function test_delete_skips_api_when_the_model_was_never_linked(): void
     {
         $this->fakeHubspot();

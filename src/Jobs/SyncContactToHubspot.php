@@ -219,10 +219,28 @@ class SyncContactToHubspot implements ShouldQueue
      */
     private function updateLinked(Hubspot $hubspot, string $contactId, ContactEmail $email): SyncOutcome
     {
-        $hubspot->updateContact($contactId, $this->properties);
+        if ($hubspot->tryUpdateContact($contactId, $this->properties) === null) {
+            return $this->rematchByEmail($hubspot, $email);
+        }
+
         HubspotContact::linkToUser($this->userId, $contactId, $email);
 
         return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
+    }
+
+    /**
+     * The linked contact is gone from HubSpot: deleted, or merged away, since
+     * it was linked. Drop the link and match the model by email, as on its
+     * first sync, rather than fail every sync from now on.
+     *
+     * Safe to retry: if matching fails, the model is left unlinked, and the
+     * next attempt plans the same match.
+     */
+    private function rematchByEmail(Hubspot $hubspot, ContactEmail $email): SyncOutcome
+    {
+        HubspotContact::unlink($this->userId);
+
+        return $this->adoptOrCreate($hubspot, $email);
     }
 
     /**
@@ -235,7 +253,12 @@ class SyncContactToHubspot implements ShouldQueue
      */
     private function learnLinkedEmail(Hubspot $hubspot, LearnLinkedEmail $plan, ContactEmail $email): SyncOutcome
     {
-        $contact = $hubspot->getContact($plan->contactId, ['email']);
+        $contact = $hubspot->tryGetContact($plan->contactId, ['email']);
+
+        if ($contact === null) {
+            return $this->rematchByEmail($hubspot, $email);
+        }
+
         $properties = $contact['properties'] ?? null;
         $linkedEmail = ContactEmail::tryParse(is_array($properties) ? ($properties['email'] ?? null) : null);
 
@@ -278,7 +301,8 @@ class SyncContactToHubspot implements ShouldQueue
 
         // HubSpot clears a property set to an empty string. Only the owned
         // properties are sent, so other consumers' properties stay in place.
-        $hubspot->updateContact($plan->fromContactId, array_fill_keys($plan->ownedProperties, ''));
+        // A contact that is gone has nothing left to blank.
+        $hubspot->tryUpdateContact($plan->fromContactId, array_fill_keys($plan->ownedProperties, ''));
 
         $outcome = $foundContactId === null
             ? $this->createAndLink($hubspot, $email, $properties)
@@ -290,7 +314,7 @@ class SyncContactToHubspot implements ShouldQueue
     /**
      * This model's properties, with any name it does not hold taken from the
      * contact it is leaving. HubSpot is asked only when a name is missing,
-     * and only for those names.
+     * and only for those names. A contact that is gone supplies none.
      *
      * @return array<string, mixed>
      */
@@ -302,7 +326,7 @@ class SyncContactToHubspot implements ShouldQueue
             return $this->properties;
         }
 
-        $contact = $hubspot->getContact($contactId, $missing);
+        $contact = $hubspot->tryGetContact($contactId, $missing);
         $oldProperties = $contact['properties'] ?? [];
 
         return NameFallback::fill($this->properties, is_array($oldProperties) ? $oldProperties : []);
@@ -320,12 +344,19 @@ class SyncContactToHubspot implements ShouldQueue
         // properties are sent, so nothing else on the contact is rewritten
         // from a model that no longer exists, and the contact is never
         // archived: others may use it, and it may predate this package.
-        $hubspot->updateContact($contactId, array_fill_keys($this->ownership->ownedProperties, ''));
+        $blanked = $hubspot->tryUpdateContact($contactId, array_fill_keys($this->ownership->ownedProperties, ''));
 
         // The contact lives on, but this model no longer has a link to it.
         HubspotContact::unlink($this->userId);
 
-        return new SyncOutcome($contactId, Response::HTTP_OK, SyncOutcome::VIA_LINK);
+        // A contact that is gone has nothing left to blank, so the delete has
+        // still done what it set out to. Logged as no content, as a delete
+        // with no link is: nothing was changed in HubSpot.
+        return new SyncOutcome(
+            $contactId,
+            $blanked === null ? Response::HTTP_NO_CONTENT : Response::HTTP_OK,
+            SyncOutcome::VIA_LINK,
+        );
     }
 
     /**

@@ -133,6 +133,16 @@ The link moves last, so a move that fails part way is completed when the job ret
 
 Links made before emails were recorded hold none. The first sync after upgrading reads the linked contact's email from HubSpot and records it before deciding, which costs one extra request per link, once. If that contact holds no email in HubSpot, the sync fails rather than guess.
 
+### When a linked contact is gone from HubSpot
+
+Contacts can be deleted or merged in HubSpot by people or by other systems, leaving a model linked to a contact id HubSpot no longer holds. A sync that gets a 404 for that id does not fail; what it does depends on what it was doing:
+
+- **Updating:** the link is dropped and the model is matched by email, as on its first sync. The contact HubSpot holds for that email is updated, or one is created, and the sync log records `lookup` or `created`.
+- **Moving to a new email:** there is nothing to blank on the contact being left, and no names to carry over from it. The move carries on to the contact for the new email.
+- **Deleting:** there is nothing left to blank, so the model is unlinked and the sync is logged as succeeding, with status 204.
+
+Only a 404 is treated this way. Any other failure says nothing about whether the contact exists, so it fails the sync and is retried as usual.
+
 ## Manual usage via the Facade
 
 ```php

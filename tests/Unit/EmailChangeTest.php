@@ -333,6 +333,52 @@ class EmailChangeTest extends TestCase
     }
 
     /**
+     * The contact being left was deleted or merged away in HubSpot. There
+     * are no names to carry over and nothing to blank, so the model moves
+     * straight to the contact for its new email.
+     */
+    public function test_a_move_from_a_contact_that_is_gone_still_lands_on_the_new_contact(): void
+    {
+        $this->fakeHubspot([
+            self::CONTACTS . '/hs-old'   => Http::response(['message' => 'resource not found'], 404),
+            self::CONTACTS . '/hs-old?*' => Http::response(['message' => 'resource not found'], 404),
+        ]);
+        $user = $this->linkedUser(['email' => 'jane@example.com', 'registry_development' => 'approved']);
+
+        $user->update(['email' => 'jane.new@example.com']);
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        // The first POST made hs-old, when the user was linked.
+        $this->assertEquals(
+            [['email' => 'jane.new@example.com', 'registry_development' => 'approved']],
+            array_slice($this->sentProperties('POST', self::CONTACTS), 1),
+        );
+        $this->assertSame('hs-new', HubspotContact::contactIdForUser($user->id));
+        $this->assertSame(
+            SyncOutcome::VIA_MOVED,
+            HubspotSyncLog::query()->latest('id')->firstOrFail()->resolved_via,
+        );
+    }
+
+    public function test_a_link_with_no_recorded_email_whose_contact_is_gone_is_matched_by_email(): void
+    {
+        $this->fakeHubspot([
+            self::CONTACTS . '/hs-old?*' => Http::response(['message' => 'resource not found'], 404),
+        ]);
+        $user = $this->linkedUser(['email' => 'jane@example.com', 'registry_development' => 'pending']);
+        HubspotContact::query()->update(['hubspot_email' => null]);
+
+        $user->update(['registry_development' => 'approved']);
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        $this->assertSame('hs-new', HubspotContact::contactIdForUser($user->id));
+        $this->assertSame(
+            SyncOutcome::VIA_CREATED,
+            HubspotSyncLog::query()->latest('id')->firstOrFail()->resolved_via,
+        );
+    }
+
+    /**
      * Links made before emails were recorded hold none, so which email the
      * link was made for is learnt from HubSpot before deciding.
      */

@@ -151,6 +151,58 @@ class HubspotServiceTest extends TestCase
         );
     }
 
+    /**
+     * The methods that answer null, rather than throw, when HubSpot holds no
+     * contact with the id: one deleted, or merged away, since it was linked.
+     *
+     * @return array<string, array{\Closure(Hubspot): ?array<mixed>}>
+     */
+    public static function methodsTryingAContactById(): array
+    {
+        return [
+            'tryGetContact'    => [fn (Hubspot $h) => $h->tryGetContact('12345', ['email'])],
+            'tryUpdateContact' => [fn (Hubspot $h) => $h->tryUpdateContact('12345', ['firstname' => 'Jane'])],
+        ];
+    }
+
+    /**
+     * @param  \Closure(Hubspot): ?array<mixed>  $call
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('methodsTryingAContactById')]
+    public function test_a_contact_hubspot_does_not_hold_is_null(\Closure $call): void
+    {
+        Http::fake(['*' => Http::response(['message' => 'resource not found'], 404)]);
+
+        $this->assertNull($call($this->hubspot()));
+    }
+
+    /**
+     * @param  \Closure(Hubspot): ?array<mixed>  $call
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('methodsTryingAContactById')]
+    public function test_a_contact_hubspot_holds_is_returned(\Closure $call): void
+    {
+        Http::fake(['*' => Http::response(['id' => '12345'], 200)]);
+
+        $this->assertSame(['id' => '12345'], $call($this->hubspot()));
+    }
+
+    /**
+     * Only a missing contact is null. Any other failure says nothing about
+     * whether the contact exists, so it is still thrown.
+     *
+     * @param  \Closure(Hubspot): ?array<mixed>  $call
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('methodsTryingAContactById')]
+    public function test_any_other_failure_trying_a_contact_is_thrown(\Closure $call): void
+    {
+        Http::fake(['*' => Http::response(['message' => 'internal error'], 500)]);
+
+        $this->expectException(HubspotApiException::class);
+
+        $call($this->hubspot());
+    }
+
     public function test_find_contact_id_by_returns_the_id_of_a_matching_contact(): void
     {
         Http::fake([
