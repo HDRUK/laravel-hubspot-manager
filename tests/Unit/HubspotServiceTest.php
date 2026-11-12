@@ -35,6 +35,37 @@ class HubspotServiceTest extends TestCase
         Http::preventStrayRequests();
     }
 
+    /**
+     * Every method that returns HubSpot's response body.
+     *
+     * @return array<string, array{\Closure(Hubspot): array<mixed>}>
+     */
+    public static function methodsReturningTheBody(): array
+    {
+        return [
+            'createContact'  => [fn (Hubspot $h) => $h->createContact(['email' => 'jane@example.com'])],
+            'getContact'     => [fn (Hubspot $h) => $h->getContact('12345')],
+            'updateContact'  => [fn (Hubspot $h) => $h->updateContact('12345', ['firstname' => 'Jane'])],
+            'createContacts' => [fn (Hubspot $h) => $h->createContacts([['email' => 'jane@example.com']])],
+            'updateContacts' => [fn (Hubspot $h) => $h->updateContacts([['id' => '12345', 'properties' => []]])],
+            'searchContacts' => [fn (Hubspot $h) => $h->searchContacts([])],
+        ];
+    }
+
+    /**
+     * A success with no body, or one that is not a JSON object, is still a
+     * success: the caller gets an empty array rather than a TypeError.
+     *
+     * @param  \Closure(Hubspot): array<mixed>  $call
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('methodsReturningTheBody')]
+    public function test_a_success_without_a_body_returns_an_empty_array(\Closure $call): void
+    {
+        Http::fake(['*' => Http::response(null, 204)]);
+
+        $this->assertSame([], $call($this->hubspot()));
+    }
+
     public function test_surrounding_whitespace_is_stripped_from_the_base_url(): void
     {
         config($this->validConfig());

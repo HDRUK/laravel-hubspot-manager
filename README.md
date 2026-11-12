@@ -103,7 +103,7 @@ Deleting a model does not mean the person is gone. Its owned properties are set 
 
 ### How a model is matched to a HubSpot contact
 
-Once a model has been synced, the link between it and its HubSpot contact is stored in the `hubspot_contacts` table, so updates and deletes target the correct record without any extra configuration. Installs that predate this table have their links backfilled from `hubspot_sync_logs` when the migration runs.
+Once a model has been synced, the link between it and its HubSpot contact is stored in the `hubspot_contacts` table, so updates and deletes target the correct record without any extra configuration.
 
 When a model has no stored link, the package asks HubSpot whether it already holds a contact with the same identity before creating one:
 
@@ -179,7 +179,7 @@ Every sync attempt — successful or not — is recorded in the `hubspot_sync_lo
 | `resolved_via`       | How the contact was arrived at, `null` on failure |
 | `error`              | Error message on failure, `null` on success       |
 
-`resolved_via` records which of the steps above applied — `link`, `lookup`, `conflict`, or `created` — so you can see how often existing contacts are being adopted rather than duplicated:
+`resolved_via` records how the contact was arrived at — `link`, `lookup`, `conflict` or `created` from the steps above, or `moved` when a model followed its changed email to another contact (see [What changing a model's email does](#what-changing-a-models-email-does)) — so you can see how often existing contacts are being adopted rather than duplicated:
 
 ```php
 HubspotSyncLog::query()
@@ -221,7 +221,7 @@ Event::listen(HubspotContactSynced::class, function (HubspotContactSynced $event
     // $event->action         — 'create' | 'update' | 'delete'
     // $event->statusCode     — HTTP status code
     // $event->hubspotContactId — HubSpot contact ID (nullable)
-    // $event->resolvedVia    — 'link' | 'lookup' | 'conflict' | 'created' (nullable)
+    // $event->resolvedVia    — 'link' | 'lookup' | 'conflict' | 'created' | 'moved' (nullable)
 });
 ```
 

@@ -41,7 +41,7 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
     }
 
     /**
@@ -57,7 +57,7 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
     }
 
     /**
@@ -73,7 +73,7 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
     }
 
     /**
@@ -133,7 +133,7 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
     }
 
     /**
@@ -149,7 +149,7 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
     }
 
     /**
@@ -187,7 +187,21 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
+    }
+
+    /**
+     * The response body as an array. A success may carry no body, or one
+     * that is not a JSON object; either is an empty array, so a caller
+     * typed to receive an array never receives null.
+     *
+     * @return array<string, mixed>
+     */
+    private function body(Response $response): array
+    {
+        $body = $response->json();
+
+        return is_array($body) ? $body : [];
     }
 
     private function throwIfFailed(Response $response): void
