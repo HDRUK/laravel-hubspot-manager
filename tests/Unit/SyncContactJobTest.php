@@ -11,6 +11,7 @@ use Hdruk\LaravelHubspotManager\Jobs\SyncOutcome;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Hdruk\LaravelHubspotManager\Tests\Fixtures\SyncableUser;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
@@ -63,6 +64,11 @@ class SyncContactJobTest extends TestCase
             public function toHubspotProperties(): array
             {
                 return $this->fakeProperties;
+            }
+
+            public function hubspotOwnership(): HubspotOwnership
+            {
+                return HubspotOwnership::exclusive();
             }
         };
 
@@ -551,6 +557,11 @@ class SyncContactJobTest extends TestCase
             {
                 throw new \RuntimeException('organisation relation is null');
             }
+
+            public function hubspotOwnership(): HubspotOwnership
+            {
+                return HubspotOwnership::exclusive();
+            }
         };
 
         $this->fakeHubspot();
@@ -575,6 +586,35 @@ class SyncContactJobTest extends TestCase
         $this->expectExceptionMessageMatches('/toHubspotProperties/');
 
         new SyncContactToHubspot($model, HubspotAction::Create);
+    }
+
+    /**
+     * A model using the trait cannot leave ownership undeclared: the trait
+     * declares it abstract. One that defines toHubspotProperties() itself is
+     * caught here instead, since the job has nothing safe to assume. Taking
+     * it as exclusive would archive a contact other systems still use.
+     */
+    public function test_a_model_that_does_not_declare_its_ownership_is_rejected_at_dispatch(): void
+    {
+        $model = new class extends Model {
+            public function getKey(): mixed
+            {
+                return 1;
+            }
+
+            /**
+             * @return array<string, mixed>
+             */
+            public function toHubspotProperties(): array
+            {
+                return ['email' => 'jane@example.com'];
+            }
+        };
+
+        $this->expectException(HubspotConfigurationException::class);
+        $this->expectExceptionMessageMatches('/hubspotOwnership/');
+
+        new SyncContactToHubspot($model, HubspotAction::Delete);
     }
 
     public function test_a_model_without_a_key_is_rejected_at_dispatch(): void

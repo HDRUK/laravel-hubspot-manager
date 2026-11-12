@@ -2,6 +2,7 @@
 
 namespace Hdruk\LaravelHubspotManager\Tests\Fixtures;
 
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 use Illuminate\Database\Eloquent\Model;
 
@@ -24,4 +25,9 @@ class SyncableUser extends Model
     protected $fillable = ['email'];
 
     public $timestamps = false;
+
+    public function hubspotOwnership(): HubspotOwnership
+    {
+        return HubspotOwnership::exclusive();
+    }
 }

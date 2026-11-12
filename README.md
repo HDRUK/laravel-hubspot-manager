@@ -46,15 +46,23 @@ The full config is available at `config/hubspotmanager.php` after publishing.
 Add `HasHubspotContact` to any Eloquent model you want synced. Model `created`, `updated`, and `deleted` events will automatically dispatch a queued job to HubSpot.
 
 ```php
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 
 class User extends Authenticatable
 {
     use HasHubspotContact;
+
+    public function hubspotOwnership(): HubspotOwnership
+    {
+        return HubspotOwnership::shared('my_system_flag');
+    }
 }
 ```
 
-A model that defines no `toHubspotProperties()`, or has no primary key yet, is rejected where the job is constructed rather than failing partway through a queued job.
+Every model must declare `hubspotOwnership()`; see [Sharing a contact with other systems](#sharing-a-contact-with-other-systems). The trait declares it abstract, so a model that leaves it out fails as soon as its class is loaded, and in static analysis.
+
+A model that defines no `toHubspotProperties()` or `hubspotOwnership()`, or has no primary key yet, is rejected where the job is constructed rather than failing partway through a queued job.
 
 `toHubspotProperties()` is called when the job is dispatched, not when it runs. The job carries the model's key and properties as they were at the moment of the change, so a retry sends exactly what the first attempt sent, and a deleted model can still be synced. The `product_name` config is read at the same point. This also means `toHubspotProperties()` runs in the request that changed the model, so anything it reads (such as `app()->environment()`) comes from that request rather than from the queue worker.
 
@@ -74,7 +82,9 @@ public function toHubspotProperties(): array
 
 ### Sharing a contact with other systems
 
-A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. By default a model is assumed to have its contact to itself. Override `hubspotOwnership()` to declare that it shares the contact, naming the properties it owns:
+A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. A system cannot see the others, so every model has to say which case it is in. There is no default: a model wrongly taken to have its contact to itself would archive a contact other systems still use, and one taken to share it could not know which properties it owns.
+
+A model that shares the contact names the properties it owns:
 
 ```php
 use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
@@ -85,7 +95,7 @@ public function hubspotOwnership(): HubspotOwnership
 }
 ```
 
-`shared()` needs at least one property name. To declare the default explicitly, return `HubspotOwnership::exclusive()`.
+`shared()` needs at least one property name. A model whose contact no other system uses returns `HubspotOwnership::exclusive()`.
 
 ### What deleting a model does
 
@@ -201,7 +211,7 @@ The `hubspot_contacts` table holds the current link between a model and its HubS
 | `hubspot_contact_id` | The HubSpot contact this model is linked to                                |
 | `unlinked_at`        | Set when the link ends (the model was deleted), `null` while the link is live |
 
-Note that a model that archives on delete (the default, see [What deleting a model does](#what-deleting-a-model-does)) archives its HubSpot contact — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
+Note that an exclusive model (see [What deleting a model does](#what-deleting-a-model-does)) archives its HubSpot contact on delete — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
 
 ## Events
 

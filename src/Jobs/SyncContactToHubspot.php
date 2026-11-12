@@ -64,6 +64,14 @@ class SyncContactToHubspot implements ShouldQueue
             throw HubspotConfigurationException::notContactable($model::class);
         }
 
+        // The trait declares this abstract, so a model using it cannot omit
+        // it. One that defines toHubspotProperties() without the trait can,
+        // and no default is safe: exclusive would archive a contact other
+        // systems still use, and shared needs the properties the model owns.
+        if (!method_exists($model, 'hubspotOwnership')) {
+            throw HubspotConfigurationException::undeclaredOwnership($model::class);
+        }
+
         $key = $model->getKey();
 
         if (!is_int($key) && !is_string($key)) {
@@ -94,16 +102,12 @@ class SyncContactToHubspot implements ShouldQueue
             ?? throw new LogicException('A create or update without an email is rejected at dispatch.');
     }
 
-    /**
-     * A model that defines toHubspotProperties() without the trait has never
-     * declared that it shares its contact, so it is treated as exclusive, as
-     * it always has been.
-     */
     private static function snapshotOwnership(Model $model): HubspotOwnership
     {
-        return method_exists($model, 'hubspotOwnership')
-            ? $model->hubspotOwnership()
-            : HubspotOwnership::exclusive();
+        // Guaranteed to exist by the constructor; the analyser cannot see a
+        // method that consuming models supply via the trait.
+        // @phpstan-ignore method.notFound
+        return $model->hubspotOwnership();
     }
 
     /**
