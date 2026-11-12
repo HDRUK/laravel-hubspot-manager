@@ -22,9 +22,10 @@ class SyncHubspotContacts extends Command
         /** @var class-string<\Illuminate\Database\Eloquent\Model> $modelClass */
         $modelClass = config('hubspotmanager.default.models.users');
 
-        $id = $this->option('user');
+        $option = $this->option('user');
+        $id = is_int($option) || is_string($option) ? (string) $option : '';
 
-        if (is_string($id) && $id !== '') {
+        if ($id !== '') {
             SyncContactToHubspot::dispatch($modelClass::query()->findOrFail($id), HubspotAction::Create);
             $this->info("Dispatched sync for {$modelClass} #{$id}.");
             return Command::SUCCESS;
