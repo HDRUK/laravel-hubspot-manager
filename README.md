@@ -55,7 +55,7 @@ class User extends Authenticatable
 
     public function hubspotOwnership(): HubspotOwnership
     {
-        return HubspotOwnership::shared('my_system_flag');
+        return HubspotOwnership::owns('my_system_flag');
     }
 }
 ```
@@ -82,26 +82,24 @@ public function toHubspotProperties(): array
 
 ### Sharing a contact with other systems
 
-A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. A system cannot see the others, so every model has to say which case it is in. There is no default: a model wrongly taken to have its contact to itself would archive a contact other systems still use, and one taken to share it could not know which properties it owns.
-
-A model that shares the contact names the properties it owns:
+A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. It may also predate all of them. A system cannot see the others, so the package treats every contact as shared: each model names the properties it owns, and acts on no others.
 
 ```php
 use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 
 public function hubspotOwnership(): HubspotOwnership
 {
-    return HubspotOwnership::shared('my_system_flag', 'my_system_role');
+    return HubspotOwnership::owns('my_system_flag', 'my_system_role');
 }
 ```
 
-`shared()` needs at least one property name. A model whose contact no other system uses returns `HubspotOwnership::exclusive()`.
+`owns()` needs at least one property name. There is no default, since only the model knows what it owns.
+
+Properties every system sends, such as `email`, `firstname` and `lastname`, are not owned by any one of them. Whichever system syncs last sets them.
 
 ### What deleting a model does
 
-Deleting an **exclusive** model archives its HubSpot contact.
-
-Deleting a **shared** model does not mean the person is gone. Its owned properties are set to empty, no other property on the contact is sent, and the contact stays in place for the other systems.
+Deleting a model does not mean the person is gone. Its owned properties are set to empty, no other property on the contact is sent, and the contact stays in place for the other systems. The package never archives or deletes a HubSpot contact.
 
 ### How a model is matched to a HubSpot contact
 
@@ -113,7 +111,7 @@ When a model has no stored link, the package asks HubSpot whether it already hol
 2. **Lookup by identity** — `GET /crm/v3/objects/contacts/{value}?idProperty={property}`. A contact that predates this package is adopted and updated rather than duplicated.
 3. **Create** — only when HubSpot holds no matching contact. If HubSpot rejects the create as a duplicate (409), the contact it names in the error is adopted instead. This covers the case where two queue workers race, or a contact appears between the lookup and the create.
 
-Deletes never reach step 2. A model that this package has no link for will not archive a HubSpot contact it did not create.
+Deletes never reach step 2. A model that this package has no link for sends nothing to HubSpot when deleted.
 
 The lookup matches on `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts, and is not configurable for that reason. The address is read from `toHubspotProperties()`, so it keeps working when your local column is named differently. It is trimmed and lowercased before the lookup, and the same normalised email is stored with the link.
 
@@ -123,9 +121,7 @@ A create or update whose email is missing, blank, or non-scalar is rejected wher
 
 Each link records the email it was made for, so a sync can tell when a model's email has changed.
 
-An **exclusive** model's contact is its own, so the new email is written to it in place.
-
-A **shared** model's contact is keyed on an email the other systems still hold, so rewriting it would leave them linked to a contact that no longer holds their email. The model moves instead:
+The new email is never written to the contact the model is linked to. That contact is keyed on an email other systems may still hold, so rewriting it would leave them linked to a contact that no longer holds their email. The model moves instead:
 
 1. The contact HubSpot holds for the new email is looked up.
 2. If it is the contact the model is already linked to (for example, the new email is one of its secondary emails), it is updated in place and nothing moves.
@@ -135,7 +131,7 @@ A **shared** model's contact is keyed on an email the other systems still hold, 
 
 The link moves last, so a move that fails part way is completed when the job retries.
 
-Links made before emails were recorded hold none. For a shared model, the first sync after upgrading reads the linked contact's email from HubSpot and records it before deciding, which costs one extra request per link, once. If that contact holds no email in HubSpot, the sync fails rather than guess.
+Links made before emails were recorded hold none. The first sync after upgrading reads the linked contact's email from HubSpot and records it before deciding, which costs one extra request per link, once. If that contact holds no email in HubSpot, the sync fails rather than guess.
 
 ## Manual usage via the Facade
 
@@ -211,7 +207,7 @@ The `hubspot_contacts` table holds the current link between a model and its HubS
 | `hubspot_contact_id` | The HubSpot contact this model is linked to                                |
 | `unlinked_at`        | Set when the link ends (the model was deleted), `null` while the link is live |
 
-Note that an exclusive model (see [What deleting a model does](#what-deleting-a-model-does)) archives its HubSpot contact on delete — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
+Note that deleting a model leaves its HubSpot contact in place (see [What deleting a model does](#what-deleting-a-model-does)): the person's email, names, and any properties other systems wrote all remain in HubSpot. Deleting a model therefore does not satisfy a right-to-erasure request. Erase the person in HubSpot itself.
 
 ## Events
 

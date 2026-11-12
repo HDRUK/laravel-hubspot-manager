@@ -18,9 +18,8 @@ class HubspotConfigurationException extends RuntimeException
     {
         return new self(
             "Laravel HubSpot Manager: model [{$class}] cannot be synced because it does not "
-            . "define hubspotOwnership(). Declare whether it shares its HubSpot contact with other "
-            . "systems: return HubspotOwnership::shared(...) naming the properties it owns, or "
-            . "HubspotOwnership::exclusive() if no other system uses the contact."
+            . "define hubspotOwnership(). Return HubspotOwnership::owns(...) naming the HubSpot "
+            . "properties this model owns on its contact."
         );
     }
 

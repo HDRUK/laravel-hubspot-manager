@@ -66,8 +66,7 @@ class SyncContactToHubspot implements ShouldQueue
 
         // The trait declares this abstract, so a model using it cannot omit
         // it. One that defines toHubspotProperties() without the trait can,
-        // and no default is safe: exclusive would archive a contact other
-        // systems still use, and shared needs the properties the model owns.
+        // and there is no default: only the model knows what it owns.
         if (!method_exists($model, 'hubspotOwnership')) {
             throw HubspotConfigurationException::undeclaredOwnership($model::class);
         }
@@ -216,8 +215,7 @@ class SyncContactToHubspot implements ShouldQueue
 
     /**
      * Relinked with the email just sent, so the stored email stays current:
-     * an exclusive model's changed email, or a case-only change, is recorded
-     * as well as sent.
+     * a case-only change is recorded as well as sent.
      */
     private function updateLinked(Hubspot $hubspot, string $contactId, ContactEmail $email): SyncOutcome
     {
@@ -318,19 +316,11 @@ class SyncContactToHubspot implements ShouldQueue
             return new SyncOutcome(null, Response::HTTP_NO_CONTENT);
         }
 
-        $ownedProperties = $this->ownership->ownedProperties;
-
-        if ($ownedProperties === null) {
-            $hubspot->deleteContact($contactId);
-            HubspotContact::unlink($this->userId);
-
-            return new SyncOutcome($contactId, Response::HTTP_NO_CONTENT, SyncOutcome::VIA_LINK);
-        }
-
         // HubSpot clears a property set to an empty string. Only the owned
-        // properties are sent, so nothing else on a shared contact is
-        // rewritten from a model that no longer exists.
-        $hubspot->updateContact($contactId, array_fill_keys($ownedProperties, ''));
+        // properties are sent, so nothing else on the contact is rewritten
+        // from a model that no longer exists, and the contact is never
+        // archived: others may use it, and it may predate this package.
+        $hubspot->updateContact($contactId, array_fill_keys($this->ownership->ownedProperties, ''));
 
         // The contact lives on, but this model no longer has a link to it.
         HubspotContact::unlink($this->userId);

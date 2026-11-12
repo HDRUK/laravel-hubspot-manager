@@ -75,7 +75,7 @@ class HubspotContact extends Model
 
     /**
      * Point a model at a HubSpot contact for an email, replacing any previous
-     * link and clearing an earlier archive. Upsert rather than
+     * link and clearing an earlier unlink. Upsert rather than
      * updateOrCreate: the unique index on user_id makes this atomic, where a
      * read-then-write would race between workers.
      */
@@ -97,9 +97,8 @@ class HubspotContact extends Model
      * Record that a model no longer has a live link to its HubSpot contact,
      * typically because the model was deleted.
      *
-     * Says nothing about the contact itself, which may have been archived in
-     * HubSpot or may live on with other properties because it is shared
-     * with other systems. The row is kept so the id remains visible, and
+     * Says nothing about the contact itself, which lives on in HubSpot with
+     * whatever other systems wrote to it. The row is kept so the id remains visible, and
      * unlinked_at records when the link ended. The row no longer resolves
      * as live.
      */

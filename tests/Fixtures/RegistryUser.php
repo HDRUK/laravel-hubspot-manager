@@ -45,6 +45,6 @@ class RegistryUser extends Model
 
     public function hubspotOwnership(): HubspotOwnership
     {
-        return HubspotOwnership::shared('registry_development');
+        return HubspotOwnership::owns('registry_development');
     }
 }

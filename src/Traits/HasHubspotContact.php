@@ -33,18 +33,15 @@ trait HasHubspotContact
     }
 
     /**
-     * Whether this model has its HubSpot contact to itself, or shares it with
-     * other systems and owns only some of its properties. Called whenever a
-     * sync is dispatched, and carried with the queued job.
+     * The properties this model owns on its HubSpot contact, which may be
+     * shared with other systems. Called whenever a sync is dispatched, and
+     * carried with the queued job.
      *
-     * Every model must declare it. There is no safe default: a model wrongly
-     * taken as exclusive archives a contact other systems still use, and one
-     * taken as shared cannot know which properties it owns. Abstract, so a
-     * model that omits it fails when its class is loaded, and in static
-     * analysis, rather than when a contact is deleted.
+     * Every model must declare it: only the model knows what it owns.
+     * Abstract, so a model that omits it fails when its class is loaded, and
+     * in static analysis, rather than when a contact is deleted.
      *
-     *     return HubspotOwnership::shared('my_system_flag');
-     *     return HubspotOwnership::exclusive();
+     *     return HubspotOwnership::owns('my_system_flag', 'my_system_role');
      */
     abstract public function hubspotOwnership(): HubspotOwnership;
 

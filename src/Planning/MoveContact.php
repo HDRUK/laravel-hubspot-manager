@@ -3,12 +3,11 @@
 namespace Hdruk\LaravelHubspotManager\Planning;
 
 /**
- * The model shares its contact and its email has changed. Leave the contact
- * it is linked to, blanking the properties it owns there, and move to the
- * contact for the new email.
+ * The model's email has changed. Leave the contact it is linked to, blanking
+ * the properties it owns there, and move to the contact for the new email.
  *
- * Only a shared model can move, so the owned properties are carried here
- * and are never empty.
+ * Every model owns at least one property, so the list carried here is never
+ * empty.
  */
 final class MoveContact implements SyncPlan
 {

@@ -20,20 +20,14 @@ final class SyncPlanner
             return new AdoptOrCreate();
         }
 
-        $ownedProperties = $ownership->ownedProperties;
-
-        // An exclusive model's contact is its own, so even a changed email is
-        // written to it in place: no other consumer relies on the old one.
-        if ($ownedProperties === null) {
-            return new UpdateLinked($link->contactId);
-        }
-
         if ($link->email === null) {
             return new LearnLinkedEmail($link->contactId);
         }
 
+        // Others may rely on the email the contact holds, so a changed email
+        // is never written to it: the model moves instead.
         return $link->email->equals($email)
             ? new UpdateLinked($link->contactId)
-            : new MoveContact($link->contactId, $ownedProperties);
+            : new MoveContact($link->contactId, $ownership->ownedProperties);
     }
 }

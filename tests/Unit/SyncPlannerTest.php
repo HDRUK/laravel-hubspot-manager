@@ -26,8 +26,7 @@ class SyncPlannerTest extends TestCase
      */
     public static function cases(): array
     {
-        $exclusive = HubspotOwnership::exclusive();
-        $shared = HubspotOwnership::shared('registry_development');
+        $owning = HubspotOwnership::owns('registry_development');
 
         $linkedToSame = new ContactLink('hs-1', ContactEmail::parse('jane@example.com'));
         $linkedToSameInOtherCase = new ContactLink('hs-1', ContactEmail::parse('JANE@Example.com'));
@@ -35,17 +34,11 @@ class SyncPlannerTest extends TestCase
         $linkedToUnknown = new ContactLink('hs-1', null);
 
         return [
-            'exclusive, unlinked'                => [$exclusive, null, new AdoptOrCreate()],
-            'shared, unlinked'                   => [$shared, null, new AdoptOrCreate()],
-
-            'exclusive, same email'              => [$exclusive, $linkedToSame, new UpdateLinked('hs-1')],
-            'exclusive, email changed'           => [$exclusive, $linkedToOther, new UpdateLinked('hs-1')],
-            'exclusive, linked email unknown'    => [$exclusive, $linkedToUnknown, new UpdateLinked('hs-1')],
-
-            'shared, same email'                 => [$shared, $linkedToSame, new UpdateLinked('hs-1')],
-            'shared, email changed only in case' => [$shared, $linkedToSameInOtherCase, new UpdateLinked('hs-1')],
-            'shared, email changed'              => [$shared, $linkedToOther, new MoveContact('hs-1', ['registry_development'])],
-            'shared, linked email unknown'       => [$shared, $linkedToUnknown, new LearnLinkedEmail('hs-1')],
+            'unlinked'                   => [$owning, null, new AdoptOrCreate()],
+            'same email'                 => [$owning, $linkedToSame, new UpdateLinked('hs-1')],
+            'email changed only in case' => [$owning, $linkedToSameInOtherCase, new UpdateLinked('hs-1')],
+            'email changed'              => [$owning, $linkedToOther, new MoveContact('hs-1', ['registry_development'])],
+            'linked email unknown'       => [$owning, $linkedToUnknown, new LearnLinkedEmail('hs-1')],
         ];
     }
 

@@ -28,6 +28,6 @@ class SyncableUser extends Model
 
     public function hubspotOwnership(): HubspotOwnership
     {
-        return HubspotOwnership::exclusive();
+        return HubspotOwnership::owns('registry_development', 'registry_persona');
     }
 }

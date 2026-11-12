@@ -276,7 +276,7 @@ class EmailChangeTest extends TestCase
         $this->assertContains(['registry_development' => ''], $this->sentProperties('PATCH', self::CONTACTS . '/hs-old'));
     }
 
-    public function test_a_shared_model_whose_email_is_unchanged_updates_its_contact_in_place(): void
+    public function test_a_model_whose_email_is_unchanged_updates_its_contact_in_place(): void
     {
         $this->fakeHubspot();
         $user = $this->linkedUser(['email' => 'jane@example.com', 'registry_development' => 'pending']);

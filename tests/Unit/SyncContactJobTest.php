@@ -68,7 +68,7 @@ class SyncContactJobTest extends TestCase
 
             public function hubspotOwnership(): HubspotOwnership
             {
-                return HubspotOwnership::exclusive();
+                return HubspotOwnership::owns('registry_development');
             }
         };
 
@@ -88,6 +88,7 @@ class SyncContactJobTest extends TestCase
         HubspotContact::create([
             'user_id'            => $userId,
             'hubspot_contact_id' => $contactId,
+            'hubspot_email'      => 'jane@example.com',
             'unlinked_at'        => $unlinkedAt,
         ]);
     }
@@ -451,21 +452,24 @@ class SyncContactJobTest extends TestCase
         }
     }
 
-    public function test_delete_archives_contact_when_the_model_is_linked(): void
+    public function test_delete_blanks_owned_properties_and_never_archives_the_contact(): void
     {
         $this->seedLink('hs-001');
 
         $this->fakeHubspot([
-            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(null, 204),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
         ]);
 
         $this->runJob('delete');
 
-        Http::assertSent(fn ($r) => $r->method() === 'DELETE' && str_contains($r->url(), 'hs-001'));
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+            && str_ends_with($r->url(), '/hs-001')
+            && $r->data() === ['properties' => ['registry_development' => '']]);
+        Http::assertNotSent(fn ($r) => $r->method() === 'DELETE');
 
         $log = HubspotSyncLog::orderBy('id', 'desc')->firstOrFail();
         $this->assertSame('delete', $log->action);
-        $this->assertSame(204, $log->status_code);
+        $this->assertSame(200, $log->status_code);
         $this->assertSame('hs-001', $log->hubspot_contact_id);
 
         $this->assertNull(HubspotContact::contactIdForUser(1));
@@ -560,7 +564,7 @@ class SyncContactJobTest extends TestCase
 
             public function hubspotOwnership(): HubspotOwnership
             {
-                return HubspotOwnership::exclusive();
+                return HubspotOwnership::owns('registry_development');
             }
         };
 
@@ -591,8 +595,7 @@ class SyncContactJobTest extends TestCase
     /**
      * A model using the trait cannot leave ownership undeclared: the trait
      * declares it abstract. One that defines toHubspotProperties() itself is
-     * caught here instead, since the job has nothing safe to assume. Taking
-     * it as exclusive would archive a contact other systems still use.
+     * caught here instead, since only the model knows what it owns.
      */
     public function test_a_model_that_does_not_declare_its_ownership_is_rejected_at_dispatch(): void
     {
@@ -704,12 +707,12 @@ class SyncContactJobTest extends TestCase
         $this->seedLink('hs-001');
 
         $this->fakeHubspot([
-            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(null, 204),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
         ]);
 
         $this->runJob('delete', $this->fakeModel(properties: []));
 
-        Http::assertSent(fn ($r) => $r->method() === 'DELETE' && str_contains($r->url(), 'hs-001'));
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_ends_with($r->url(), '/hs-001'));
     }
 
     public function test_product_name_is_included_in_properties_when_configured(): void
