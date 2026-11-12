@@ -2,12 +2,14 @@
 
 namespace Hdruk\LaravelHubspotManager\Jobs;
 
+use DateTimeInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Response;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\RateLimited;
 use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Events\HubspotContactSynced;
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
@@ -40,7 +42,13 @@ class SyncContactToHubspot implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable;
 
-    public int $tries = 3;
+    public const RATE_LIMITER = 'hubspot-sync';
+
+    /**
+     * Failures allowed, rather than $tries: Laravel counts each rate-limit
+     * release as a try.
+     */
+    public int $maxExceptions = 3;
 
     public readonly int|string $userId;
 
@@ -127,11 +135,31 @@ class SyncContactToHubspot implements ShouldQueue
     }
 
     /**
+     * A deadline replaces any limit on attempts, including the worker's
+     * --tries, so rate-limit releases are never counted. It is the backstop
+     * for a job that never gets to run, such as one behind a limit set to 0.
+     * Fixed when the job is dispatched, so it counts from the change, not
+     * from the latest attempt.
+     */
+    public function retryUntil(): DateTimeInterface
+    {
+        return now()->addDay();
+    }
+
+    /**
      * @return list<int>
      */
     public function backoff(): array
     {
         return [10, 60, 300];
+    }
+
+    /**
+     * @return list<object>
+     */
+    public function middleware(): array
+    {
+        return [new RateLimited(self::RATE_LIMITER)];
     }
 
     public function handle(Hubspot $hubspot): void

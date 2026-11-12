@@ -2,8 +2,11 @@
 
 namespace Hdruk\LaravelHubspotManager\Providers;
 
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Hdruk\LaravelHubspotManager\Commands\SyncHubspotContacts;
+use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 
 /**
@@ -23,6 +26,11 @@ class LaravelHubspotManagerProvider extends ServiceProvider
         ], 'hubspot-config');
 
         $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
+
+        RateLimiter::for(SyncContactToHubspot::RATE_LIMITER, fn () => Limit::perSecond(
+            (int) config('hubspotmanager.default.syncs_per_10_seconds', 25),
+            10,
+        ));
 
         if ($this->app->runningInConsole()) {
             $this->commands([SyncHubspotContacts::class]);

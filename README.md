@@ -5,7 +5,7 @@ A Laravel package for syncing application users to HubSpot contacts, with queued
 ## Requirements
 
 - PHP 8.1+
-- Laravel 10, 11, or 12
+- Laravel 11 or 12
 
 ## Installation
 
@@ -35,6 +35,7 @@ HUBSPOT_BASE_URL=https://api.hubapi.com        # default, can be omitted
 HUBSPOT_INTEGRATION_ENABLED=true               # default, can be omitted
 HUBSPOT_INTEGRATION_PRODUCT_NAME=MyApp         # optional — for your reference
 HUBSPOT_SYNC_USER_MODEL=App\Models\User        # default, can be omitted
+HUBSPOT_SYNCS_PER_10_SECONDS=25                # default, can be omitted
 ```
 
 The full config is available at `config/hubspotmanager.php` after publishing.
@@ -251,6 +252,12 @@ php artisan hubspot:sync --user=42
 
 The command uses the model configured in `HUBSPOT_SYNC_USER_MODEL` and chunks records in batches of 200 to avoid memory exhaustion.
 
+## Rate limiting
+
+HubSpot limits how many requests an app may send in each 10-second window and rejects the rest. Sync jobs share one limit, `HUBSPOT_SYNCS_PER_10_SECONDS` (25 by default, and at least 1). A job over the limit is released back onto the queue and runs in a later window, so a bulk sync drains steadily rather than failing.
+
+The limit counts jobs, not requests. A sync makes one request in the common case and up to six when it moves a model to a new email, so set the limit with that in mind. It is counted in your cache store, which must be shared by every queue worker, and is per application: several applications sharing one HubSpot private app each get their own limit, and HubSpot counts them together.
+
 ## Batch operations
 
 For high-volume imports use the batch API methods to send up to 100 contacts per request:
@@ -296,7 +303,7 @@ try {
 }
 ```
 
-The `SyncContactToHubspot` job retries up to 3 times with exponential backoff (10s → 60s → 300s). When all retries are exhausted, a final `failed` log entry is written with the message `All retries exhausted: ...`.
+The `SyncContactToHubspot` job fails after 3 attempts that throw, waiting 10s and then 60s between them. A job that has already waited for the rate limit waits longer, up to 300s, since Laravel picks the wait by the job's total attempts. Waiting for the rate limit is not a failure and never uses up an attempt. A job that has still not succeeded a day after it was dispatched fails regardless. When a job fails, a final `failed` log entry is written with the message `All retries exhausted: ...`.
 
 ## Testing
 
