@@ -64,7 +64,7 @@ class SyncContactToHubspot implements ShouldQueue
         $this->userId = $key;
         $this->properties = self::snapshotProperties($model);
         $this->ownership = self::snapshotOwnership($model);
-        $this->email = ContactEmail::fromProperties($this->properties);
+        $this->email = ContactEmail::tryParseProperties($this->properties);
 
         // A delete acts on the stored link alone. Every other action creates,
         // finds or updates a contact by its email, and a consumer never

@@ -70,7 +70,7 @@ class HubspotContact extends Model
 
         return $row === null
             ? null
-            : new ContactLink($row->hubspot_contact_id, ContactEmail::tryFrom($row->hubspot_email));
+            : new ContactLink($row->hubspot_contact_id, ContactEmail::tryParse($row->hubspot_email));
     }
 
     /**

@@ -11,6 +11,9 @@ use InvalidArgumentException;
  * case as the same contact. Holding the normalised form in a type, rather
  * than comparing strings, means two emails can only be compared once both
  * have been normalised. A blank email cannot be constructed.
+ *
+ * A factory prefixed "try" returns null for a value that is not an email; one
+ * without it throws. The prefix alone says which can return null.
  */
 final class ContactEmail
 {
@@ -21,9 +24,9 @@ final class ContactEmail
         public readonly string $value,
     ) {}
 
-    public static function from(string $email): self
+    public static function parse(string $email): self
     {
-        return self::tryFrom($email)
+        return self::tryParse($email)
             ?? throw new InvalidArgumentException('Laravel HubSpot Manager: an email cannot be blank.');
     }
 
@@ -31,7 +34,7 @@ final class ContactEmail
      * The email, or null when the value is absent, not scalar, or blank once
      * trimmed.
      */
-    public static function tryFrom(mixed $email): ?self
+    public static function tryParse(mixed $email): ?self
     {
         if (!is_scalar($email)) {
             return null;
@@ -47,9 +50,9 @@ final class ContactEmail
      *
      * @param  array<string, mixed>  $properties
      */
-    public static function fromProperties(array $properties): ?self
+    public static function tryParseProperties(array $properties): ?self
     {
-        return self::tryFrom($properties['email'] ?? null);
+        return self::tryParse($properties['email'] ?? null);
     }
 
     public function equals(self $other): bool

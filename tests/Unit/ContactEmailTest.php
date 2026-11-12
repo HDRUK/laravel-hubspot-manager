@@ -16,20 +16,20 @@ class ContactEmailTest extends TestCase
     public function test_addresses_differing_only_in_case_and_whitespace_are_equal(): void
     {
         $this->assertTrue(
-            ContactEmail::from("  Jane@Example.COM\n")->equals(ContactEmail::from('jane@example.com'))
+            ContactEmail::parse("  Jane@Example.COM\n")->equals(ContactEmail::parse('jane@example.com'))
         );
     }
 
     public function test_different_addresses_are_not_equal(): void
     {
         $this->assertFalse(
-            ContactEmail::from('jane@example.com')->equals(ContactEmail::from('jane.new@example.com'))
+            ContactEmail::parse('jane@example.com')->equals(ContactEmail::parse('jane.new@example.com'))
         );
     }
 
     public function test_the_value_is_normalised(): void
     {
-        $this->assertSame('jane@example.com', ContactEmail::from('  Jane@Example.COM ')->value);
+        $this->assertSame('jane@example.com', ContactEmail::parse('  Jane@Example.COM ')->value);
     }
 
     /**
@@ -48,22 +48,22 @@ class ContactEmailTest extends TestCase
     #[DataProvider('unusableValues')]
     public function test_an_unusable_value_is_no_email(mixed $value): void
     {
-        $this->assertNull(ContactEmail::tryFrom($value));
+        $this->assertNull(ContactEmail::tryParse($value));
     }
 
     public function test_a_blank_email_cannot_be_constructed(): void
     {
         $this->expectException(InvalidArgumentException::class);
 
-        ContactEmail::from(' ');
+        ContactEmail::parse(' ');
     }
 
     public function test_the_email_is_read_from_a_models_properties(): void
     {
-        $email = ContactEmail::fromProperties(['firstname' => 'Jane', 'email' => ' jane@example.com']);
+        $email = ContactEmail::tryParseProperties(['firstname' => 'Jane', 'email' => ' jane@example.com']);
 
         $this->assertNotNull($email);
         $this->assertSame('jane@example.com', $email->value);
-        $this->assertNull(ContactEmail::fromProperties(['firstname' => 'Jane']));
+        $this->assertNull(ContactEmail::tryParseProperties(['firstname' => 'Jane']));
     }
 }
