@@ -45,6 +45,8 @@ The full config is available at `config/hubspotmanager.php` after publishing.
 
 Add `HasHubspotContact` to any Eloquent model you want synced. Model `created`, `updated`, and `deleted` events will automatically dispatch a queued job to HubSpot.
 
+An `updated` event dispatches a job only when the save changed what `toHubspotProperties()` returns. A change HubSpot never sees, such as a login timestamp, queues nothing. A property that is an object, such as a date, always counts as changed, so return it as a string if you want it compared. Mass updates through the query builder fire no model events and so are never synced; run `hubspot:sync` afterwards if they change what HubSpot holds.
+
 ```php
 use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;

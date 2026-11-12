@@ -13,8 +13,31 @@ trait HasHubspotContact
     public static function bootHasHubspotContact(): void
     {
         static::created(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Create));
-        static::updated(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Update));
+        static::updated(function ($model) {
+            if ($model->hubspotPropertiesChanged()) {
+                SyncContactToHubspot::dispatch($model, HubspotAction::Update);
+            }
+        });
         static::deleted(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Delete));
+    }
+
+    /**
+     * Whether the save that fired 'updated' changed what this model sends
+     * HubSpot, so a change HubSpot never sees queues no sync.
+     *
+     * Eloquent fires 'updated' before it syncs the model's original
+     * attributes, so the original still holds the row as it was before this
+     * save. The previous properties come from a clone holding those
+     * attributes; this model is not touched.
+     *
+     * Properties are compared strictly. A property that is an object, such as
+     * a date, is a new instance each call and so always counts as changed.
+     */
+    private function hubspotPropertiesChanged(): bool
+    {
+        $before = (clone $this)->setRawAttributes($this->getRawOriginal());
+
+        return $before->toHubspotProperties() !== $this->toHubspotProperties();
     }
 
     /**
