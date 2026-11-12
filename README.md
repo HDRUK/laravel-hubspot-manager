@@ -109,7 +109,23 @@ The lookup matches on `email`, which is HubSpot's own [primary unique identifier
 
 A create or update whose email is missing, blank, or non-scalar is rejected where the job is constructed, with a `HubspotConfigurationException`. Without an email a contact cannot be found again, and looking one up by an empty value would match an arbitrary record. Deletes are exempt, since they act on the stored link alone.
 
-Note that the lookup matches on the model's **current** identity. If a contact exists in HubSpot under an old email address and the model's email has since changed, the lookup will not find it and a second contact is created.
+### What changing a model's email does
+
+Each link records the email it was made for, so a sync can tell when a model's email has changed.
+
+An **exclusive** model's contact is its own, so the new email is written to it in place.
+
+A **shared** model's contact is keyed on an email the other systems still hold, so rewriting it would leave them linked to a contact that no longer holds their email. The model moves instead:
+
+1. The contact HubSpot holds for the new email is looked up.
+2. If it is the contact the model is already linked to (for example, the new email is one of its secondary emails), it is updated in place and nothing moves.
+3. Otherwise the model's owned properties are set to empty on the contact it is leaving. Every other property there stays.
+4. The contact for the new email is updated if HubSpot holds one, or created if not, with the model's own properties. Properties owned by other systems are never copied. If the model holds no `firstname` or `lastname`, that name is taken from the contact it left.
+5. The model is linked to that contact, and the sync log records `resolved_via = moved`.
+
+The link moves last, so a move that fails part way is completed when the job retries.
+
+Links made before emails were recorded hold none. For a shared model, the first sync after upgrading reads the linked contact's email from HubSpot and records it before deciding, which costs one extra request per link, once. If that contact holds no email in HubSpot, the sync fails rather than guess.
 
 ## Manual usage via the Facade
 

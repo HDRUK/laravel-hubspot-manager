@@ -4,7 +4,9 @@ namespace Hdruk\LaravelHubspotManager\Tests\Unit;
 
 use Hdruk\LaravelHubspotManager\Exceptions\HubspotApiException;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
+use Hdruk\LaravelHubspotManager\Jobs\SyncOutcome;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
+use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 use Hdruk\LaravelHubspotManager\Tests\Fixtures\RegistryUser;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
@@ -14,6 +16,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use UnexpectedValueException;
 
 /**
  * A consumer that shares its HubSpot contact changes the email it holds for
@@ -65,7 +68,8 @@ class EmailChangeTest extends TestCase
     /**
      * HubSpot as it stands before the change: no contact holds either email,
      * so the user's create makes hs-old, and the next create makes hs-new.
-     * A test's own responses take precedence over these.
+     * hs-old holds jane@example.com and no names. A test's own responses
+     * take precedence over these.
      *
      * @param  array<string, mixed>  $responses
      */
@@ -75,6 +79,10 @@ class EmailChangeTest extends TestCase
             self::CONTACTS . '/jane%40example.com*'     => Http::response(['message' => 'resource not found'], 404),
             self::CONTACTS . '/jane.new%40example.com*' => Http::response(['message' => 'resource not found'], 404),
             self::CONTACTS . '/hs-old'                  => Http::response(['id' => 'hs-old'], 200),
+            self::CONTACTS . '/hs-old?*'                => Http::response([
+                'id'         => 'hs-old',
+                'properties' => ['email' => 'jane@example.com'],
+            ], 200),
             self::CONTACTS                              => Http::sequence()
                 ->push(['id' => 'hs-old'], 201)
                 ->push(['id' => 'hs-new'], 201),
@@ -281,6 +289,111 @@ class EmailChangeTest extends TestCase
             [['email' => 'jane@example.com', 'registry_development' => 'approved']],
             $this->sentProperties('PATCH', self::CONTACTS . '/hs-old'),
         );
+        $this->assertSame('hs-old', HubspotContact::contactIdForUser($user->id));
+    }
+
+    public function test_a_move_is_recorded_in_the_sync_log(): void
+    {
+        $this->fakeHubspot();
+        $user = $this->linkedUser(['email' => 'jane@example.com', 'registry_development' => 'approved']);
+
+        $user->update(['email' => 'jane.new@example.com']);
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        $log = HubspotSyncLog::query()->latest('id')->firstOrFail();
+        $this->assertSame('update', $log->action);
+        $this->assertSame(SyncOutcome::VIA_MOVED, $log->resolved_via);
+        $this->assertSame('hs-new', $log->hubspot_contact_id);
+    }
+
+    /**
+     * HubSpot can hold the new email on the contact being left, such as a
+     * secondary email. There is nowhere to move to, so nothing is blanked.
+     */
+    public function test_an_email_hubspot_holds_on_the_same_contact_updates_it_in_place(): void
+    {
+        $this->fakeHubspot([
+            self::CONTACTS . '/jane.new%40example.com*' => Http::response(['id' => 'hs-old'], 200),
+        ]);
+        $user = $this->linkedUser(['email' => 'jane@example.com', 'registry_development' => 'approved']);
+
+        $user->update(['email' => 'jane.new@example.com']);
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        $this->assertCount(1, $this->sentProperties('POST', self::CONTACTS), 'Only the original create');
+        $this->assertEquals(
+            [['email' => 'jane.new@example.com', 'registry_development' => 'approved']],
+            $this->sentProperties('PATCH', self::CONTACTS . '/hs-old'),
+        );
+
+        $link = HubspotContact::linkForUser($user->id);
+        $this->assertNotNull($link);
+        $this->assertSame('hs-old', $link->contactId);
+        $this->assertSame('jane.new@example.com', $link->email?->value);
+    }
+
+    /**
+     * Links made before emails were recorded hold none, so which email the
+     * link was made for is learnt from HubSpot before deciding.
+     */
+    public function test_a_link_with_no_recorded_email_still_moves_when_the_email_changes(): void
+    {
+        $this->fakeHubspot();
+        $user = $this->linkedUser(['email' => 'jane@example.com', 'registry_development' => 'approved']);
+        HubspotContact::query()->update(['hubspot_email' => null]);
+
+        $user->update(['email' => 'jane.new@example.com']);
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        $this->assertEquals(
+            [['registry_development' => '']],
+            $this->sentProperties('PATCH', self::CONTACTS . '/hs-old'),
+        );
+        $this->assertSame('hs-new', HubspotContact::contactIdForUser($user->id));
+    }
+
+    public function test_a_link_with_no_recorded_email_learns_it_when_the_email_is_unchanged(): void
+    {
+        $this->fakeHubspot();
+        $user = $this->linkedUser(['email' => 'jane@example.com', 'registry_development' => 'pending']);
+        HubspotContact::query()->update(['hubspot_email' => null]);
+
+        $user->update(['registry_development' => 'approved']);
+        $this->runAsWorker($this->lastDispatchedJob());
+
+        $this->assertEquals(
+            [['email' => 'jane@example.com', 'registry_development' => 'approved']],
+            $this->sentProperties('PATCH', self::CONTACTS . '/hs-old'),
+        );
+
+        $link = HubspotContact::linkForUser($user->id);
+        $this->assertNotNull($link);
+        $this->assertSame('hs-old', $link->contactId);
+        $this->assertSame('jane@example.com', $link->email?->value);
+    }
+
+    /**
+     * Without an email on either side there is nothing to compare, and
+     * guessing either way could blank or overwrite a contact wrongly.
+     */
+    public function test_a_link_whose_contact_holds_no_email_is_not_guessed_at(): void
+    {
+        $this->fakeHubspot([
+            self::CONTACTS . '/hs-old?*' => Http::response(['id' => 'hs-old', 'properties' => ['email' => null]], 200),
+        ]);
+        $user = $this->linkedUser(['email' => 'jane@example.com', 'registry_development' => 'approved']);
+        HubspotContact::query()->update(['hubspot_email' => null]);
+
+        $user->update(['email' => 'jane.new@example.com']);
+
+        try {
+            $this->runAsWorker($this->lastDispatchedJob());
+            $this->fail('A contact with no email should not be acted on.');
+        } catch (UnexpectedValueException) {
+        }
+
+        Http::assertNotSent(fn (Request $r) => $r->method() === 'PATCH');
+        $this->assertCount(1, $this->sentProperties('POST', self::CONTACTS), 'Only the original create');
         $this->assertSame('hs-old', HubspotContact::contactIdForUser($user->id));
     }
 

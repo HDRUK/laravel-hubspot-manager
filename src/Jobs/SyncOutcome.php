@@ -31,6 +31,12 @@ final class SyncOutcome
     /** No existing contact, so one was created. */
     public const VIA_CREATED = 'created';
 
+    /**
+     * A shared model's email changed, so it found or created a record with 
+     * the new email.
+     */
+    public const VIA_MOVED = 'moved';
+
     public function __construct(
         public readonly ?string $contactId,
         public readonly int $statusCode,
