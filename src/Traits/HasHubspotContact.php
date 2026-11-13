@@ -12,13 +12,26 @@ trait HasHubspotContact
 {
     public static function bootHasHubspotContact(): void
     {
-        static::created(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Create));
+        static::created(fn ($model) => SyncContactToHubspot::dispatchIf(
+            self::hubspotSyncEnabled(),
+            $model,
+            HubspotAction::Create,
+        ));
         static::updated(function ($model) {
-            if ($model->hubspotPropertiesChanged()) {
+            if (self::hubspotSyncEnabled() && $model->hubspotPropertiesChanged()) {
                 SyncContactToHubspot::dispatch($model, HubspotAction::Update);
             }
         });
-        static::deleted(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Delete));
+        static::deleted(fn ($model) => SyncContactToHubspot::dispatchIf(
+            self::hubspotSyncEnabled(),
+            $model,
+            HubspotAction::Delete,
+        ));
+    }
+
+    private static function hubspotSyncEnabled(): bool
+    {
+        return (bool) config('hubspotmanager.default.enabled', true);
     }
 
     /**
