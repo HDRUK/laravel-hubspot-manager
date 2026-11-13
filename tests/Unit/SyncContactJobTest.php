@@ -10,6 +10,7 @@ use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Jobs\SyncOutcome;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
+use Hdruk\LaravelHubspotManager\Services\ContactSyncer;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Hdruk\LaravelHubspotManager\Tests\Fixtures\SyncableUser;
@@ -117,7 +118,7 @@ class SyncContactJobTest extends TestCase
     private function runJob(string $action, ?Model $model = null): void
     {
         $job = new SyncContactToHubspot($model ?? $this->fakeModel(), HubspotAction::from($action));
-        $job->handle($this->hubspot());
+        $job->handle(new ContactSyncer($this->hubspot()));
     }
 
     public function test_create_posts_new_contact_and_writes_sync_log(): void
