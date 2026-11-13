@@ -72,6 +72,30 @@ class DisabledDispatchTest extends TestCase
         Bus::assertNotDispatched(SyncContactToHubspot::class);
     }
 
+    public function test_updating_a_model_while_disabled_queues_no_sync(): void
+    {
+        config(['hubspotmanager.default.enabled' => false]);
+
+        $user = $this->unownedUser()->forceFill(['email' => 'jane@example.com']);
+        $user->save();
+
+        $user->forceFill(['email' => 'janet@example.com'])->save();
+
+        Bus::assertNotDispatched(SyncContactToHubspot::class);
+    }
+
+    public function test_deleting_a_model_while_disabled_queues_no_sync(): void
+    {
+        config(['hubspotmanager.default.enabled' => false]);
+
+        $user = $this->unownedUser()->forceFill(['email' => 'jane@example.com']);
+        $user->save();
+
+        $user->delete();
+
+        Bus::assertNotDispatched(SyncContactToHubspot::class);
+    }
+
     public function test_creating_a_model_while_enabled_queues_a_create(): void
     {
         config(['hubspotmanager.default.enabled' => true]);

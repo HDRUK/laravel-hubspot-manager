@@ -12,19 +12,31 @@ trait HasHubspotContact
 {
     public static function bootHasHubspotContact(): void
     {
-        // A plain bool, not a closure: dispatchIf() builds the job only when it
-        // is true, so a disabled integration never asks the model what it owns.
         static::created(fn ($model) => SyncContactToHubspot::dispatchIf(
-            (bool) config('hubspotmanager.default.enabled', true),
+            self::hubspotSyncEnabled(),
             $model,
             HubspotAction::Create,
         ));
         static::updated(function ($model) {
-            if ($model->hubspotPropertiesChanged()) {
+            if (self::hubspotSyncEnabled() && $model->hubspotPropertiesChanged()) {
                 SyncContactToHubspot::dispatch($model, HubspotAction::Update);
             }
         });
-        static::deleted(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Delete));
+        static::deleted(fn ($model) => SyncContactToHubspot::dispatchIf(
+            self::hubspotSyncEnabled(),
+            $model,
+            HubspotAction::Delete,
+        ));
+    }
+
+    /**
+     * Whether sync is enabled. Checked before a job is built, because
+     * building one asks the model what it owns, which a model may not know
+     * in an environment where sync is disabled.
+     */
+    private static function hubspotSyncEnabled(): bool
+    {
+        return (bool) config('hubspotmanager.default.enabled', true);
     }
 
     /**
