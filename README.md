@@ -32,7 +32,7 @@ Add the following to your `.env`:
 ```env
 HUBSPOT_API_KEY=your-private-app-token
 HUBSPOT_BASE_URL=https://api.hubapi.com        # default, can be omitted
-HUBSPOT_INTEGRATION_ENABLED=true               # default, can be omitted
+HUBSPOT_INTEGRATION_ENABLED=false              # default, can be omitted
 HUBSPOT_INTEGRATION_PRODUCT_NAME=MyApp         # optional — for your reference
 HUBSPOT_SYNC_USER_MODEL=App\Models\User        # default, can be omitted
 HUBSPOT_SYNCS_PER_10_SECONDS=25                # default, can be omitted
@@ -214,10 +214,10 @@ $user->hubspotSyncLogs()->where('action', 'create')->first()->wasSuccessful(); /
 
 The `hubspot_contacts` table holds the current link between a model and its HubSpot contact — one row per model, and present state only. The history of how that state was reached stays in `hubspot_sync_logs`.
 
-| Column               | Description                                                                |
-| -------------------- | -------------------------------------------------------------------------- |
-| `user_id`            | Primary key of the synced model, unique                                    |
-| `hubspot_contact_id` | The HubSpot contact this model is linked to                                |
+| Column               | Description                                                                   |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `user_id`            | Primary key of the synced model, unique                                       |
+| `hubspot_contact_id` | The HubSpot contact this model is linked to                                   |
 | `unlinked_at`        | Set when the link ends (the model was deleted), `null` while the link is live |
 
 Note that deleting a model leaves its HubSpot contact in place (see [What deleting a model does](#what-deleting-a-model-does)): the person's email, names, and any properties other systems wrote all remain in HubSpot. Deleting a model therefore does not satisfy a right-to-erasure request. Erase the person in HubSpot itself.
