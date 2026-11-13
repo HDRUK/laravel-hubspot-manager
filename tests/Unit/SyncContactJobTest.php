@@ -11,6 +11,7 @@ use Hdruk\LaravelHubspotManager\Jobs\SyncOutcome;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Hdruk\LaravelHubspotManager\Tests\Fixtures\SyncableUser;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
 use Illuminate\Database\Eloquent\Model;
@@ -64,6 +65,11 @@ class SyncContactJobTest extends TestCase
             {
                 return $this->fakeProperties;
             }
+
+            public function hubspotOwnership(): HubspotOwnership
+            {
+                return HubspotOwnership::owns('registry_development');
+            }
         };
 
         $model->fakeId = $id;
@@ -82,6 +88,7 @@ class SyncContactJobTest extends TestCase
         HubspotContact::create([
             'user_id'            => $userId,
             'hubspot_contact_id' => $contactId,
+            'hubspot_email'      => 'jane@example.com',
             'unlinked_at'        => $unlinkedAt,
         ]);
     }
@@ -141,6 +148,51 @@ class SyncContactJobTest extends TestCase
         $this->assertSame(1, HubspotContact::count());
     }
 
+    /**
+     * Every way a model comes to be linked records the email the link was
+     * made for, so a later sync can tell whether the email has changed.
+     *
+     * Responses are given as [body, status], since a data provider runs
+     * before the application, and Http::response(), exists.
+     *
+     * @return array<string, array{array<string, array{array<string, mixed>, int}>, string}>
+     */
+    public static function waysOfLinking(): array
+    {
+        return [
+            'created' => [[
+                'https://api.hubapi.com/crm/v3/objects/contacts' => [['id' => 'hs-001'], 201],
+            ], 'hs-001'],
+            'adopted by lookup' => [[
+                'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => [['id' => 'hs-900'], 200],
+                'https://api.hubapi.com/crm/v3/objects/contacts/hs-900'              => [['id' => 'hs-900'], 200],
+            ], 'hs-900'],
+            'adopted after a conflict' => [[
+                'https://api.hubapi.com/crm/v3/objects/contacts/777' => [['id' => '777'], 200],
+                'https://api.hubapi.com/crm/v3/objects/contacts'     => [[
+                    'message'  => 'Contact already exists. Existing ID: 777',
+                    'category' => 'CONFLICT',
+                ], 409],
+            ], '777'],
+        ];
+    }
+
+    /**
+     * @param  array<string, array{array<string, mixed>, int}>  $responses
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('waysOfLinking')]
+    public function test_a_link_records_the_email_it_was_made_for(array $responses, string $contactId): void
+    {
+        $this->fakeHubspot(array_map(fn (array $r) => Http::response($r[0], $r[1]), $responses));
+
+        $this->runJob('create', $this->fakeModel(properties: ['email' => ' Jane@Example.com']));
+
+        $link = HubspotContact::linkForUser(1);
+        $this->assertNotNull($link);
+        $this->assertSame($contactId, $link->contactId);
+        $this->assertSame('jane@example.com', $link->email?->value);
+    }
+
     public function test_create_adopts_an_existing_hubspot_contact_when_one_matches(): void
     {
         $this->fakeHubspot([
@@ -192,18 +244,6 @@ class SyncContactJobTest extends TestCase
         Http::assertNotSent(fn ($r) => $r->method() === 'POST');
 
         $this->assertSame('hs-900', HubspotContact::contactIdForUser(1));
-    }
-
-    public function test_a_model_with_no_identity_is_never_looked_up(): void
-    {
-        $this->fakeHubspot([
-            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
-        ]);
-
-        $this->runJob('create', $this->fakeModel(properties: ['firstname' => 'Jane']));
-
-        Http::assertNotSent(fn ($r) => $r->method() === 'GET');
-        Http::assertSent(fn ($r) => $r->method() === 'POST');
     }
 
     public function test_a_linked_model_is_never_looked_up(): void
@@ -412,25 +452,91 @@ class SyncContactJobTest extends TestCase
         }
     }
 
-    public function test_delete_archives_contact_when_the_model_is_linked(): void
+    public function test_delete_blanks_owned_properties_and_never_archives_the_contact(): void
     {
         $this->seedLink('hs-001');
 
         $this->fakeHubspot([
-            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(null, 204),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
         ]);
 
         $this->runJob('delete');
 
-        Http::assertSent(fn ($r) => $r->method() === 'DELETE' && str_contains($r->url(), 'hs-001'));
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+            && str_ends_with($r->url(), '/hs-001')
+            && $r->data() === ['properties' => ['registry_development' => '']]);
+        Http::assertNotSent(fn ($r) => $r->method() === 'DELETE');
 
         $log = HubspotSyncLog::orderBy('id', 'desc')->firstOrFail();
         $this->assertSame('delete', $log->action);
-        $this->assertSame(204, $log->status_code);
+        $this->assertSame(200, $log->status_code);
         $this->assertSame('hs-001', $log->hubspot_contact_id);
 
         $this->assertNull(HubspotContact::contactIdForUser(1));
         $this->assertNotNull(HubspotContact::query()->firstOrFail()->unlinked_at);
+    }
+
+    /**
+     * A contact deleted or merged away in HubSpot after it was linked. The
+     * model is matched by email again, as on its first sync, rather than
+     * failing every sync from then on.
+     */
+    public function test_an_update_whose_linked_contact_is_gone_creates_one(): void
+    {
+        $this->seedLink('hs-gone');
+
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-gone' => Http::response(['message' => 'resource not found'], 404),
+            'https://api.hubapi.com/crm/v3/objects/contacts'         => Http::response(['id' => 'hs-002'], 201),
+        ]);
+
+        $this->runJob('update');
+
+        $this->assertSame('hs-002', HubspotContact::contactIdForUser(1));
+
+        $log = HubspotSyncLog::query()->latest('id')->firstOrFail();
+        $this->assertSame(201, $log->status_code);
+        $this->assertSame(SyncOutcome::VIA_CREATED, $log->resolved_via);
+    }
+
+    public function test_an_update_whose_linked_contact_is_gone_adopts_the_contact_holding_its_email(): void
+    {
+        $this->seedLink('hs-gone');
+
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-gone'             => Http::response(['message' => 'resource not found'], 404),
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane%40example.com*' => Http::response(['id' => 'hs-900'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-900'              => Http::response(['id' => 'hs-900'], 200),
+        ]);
+
+        $this->runJob('update');
+
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+        $this->assertSame('hs-900', HubspotContact::contactIdForUser(1));
+        $this->assertSame(
+            SyncOutcome::VIA_LOOKUP,
+            HubspotSyncLog::query()->latest('id')->firstOrFail()->resolved_via,
+        );
+    }
+
+    /**
+     * Nothing is left to blank, so the delete has done what it set out to.
+     */
+    public function test_a_delete_whose_linked_contact_is_gone_unlinks_without_failing(): void
+    {
+        $this->seedLink('hs-gone');
+
+        $this->fakeHubspot([
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-gone' => Http::response(['message' => 'resource not found'], 404),
+        ]);
+
+        $this->runJob('delete');
+
+        $this->assertNull(HubspotContact::contactIdForUser(1));
+
+        $log = HubspotSyncLog::query()->latest('id')->firstOrFail();
+        $this->assertTrue($log->wasSuccessful());
+        $this->assertNull($log->error);
     }
 
     public function test_delete_skips_api_when_the_model_was_never_linked(): void
@@ -518,6 +624,11 @@ class SyncContactJobTest extends TestCase
             {
                 throw new \RuntimeException('organisation relation is null');
             }
+
+            public function hubspotOwnership(): HubspotOwnership
+            {
+                return HubspotOwnership::owns('registry_development');
+            }
         };
 
         $this->fakeHubspot();
@@ -542,6 +653,34 @@ class SyncContactJobTest extends TestCase
         $this->expectExceptionMessageMatches('/toHubspotProperties/');
 
         new SyncContactToHubspot($model, HubspotAction::Create);
+    }
+
+    /**
+     * A model using the trait cannot leave ownership undeclared: the trait
+     * declares it abstract. One that defines toHubspotProperties() itself is
+     * caught here instead, since only the model knows what it owns.
+     */
+    public function test_a_model_that_does_not_declare_its_ownership_is_rejected_at_dispatch(): void
+    {
+        $model = new class extends Model {
+            public function getKey(): mixed
+            {
+                return 1;
+            }
+
+            /**
+             * @return array<string, mixed>
+             */
+            public function toHubspotProperties(): array
+            {
+                return ['email' => 'jane@example.com'];
+            }
+        };
+
+        $this->expectException(HubspotConfigurationException::class);
+        $this->expectExceptionMessageMatches('/hubspotOwnership/');
+
+        new SyncContactToHubspot($model, HubspotAction::Delete);
     }
 
     public function test_a_model_without_a_key_is_rejected_at_dispatch(): void
@@ -579,29 +718,64 @@ class SyncContactJobTest extends TestCase
     }
 
     /**
-     * @return array<string, array{mixed}>
+     * Every way toHubspotProperties() can fail to give an email, for each
+     * action that creates, finds or updates a contact by it.
+     *
+     * @return array<string, array{HubspotAction, array<string, mixed>}>
      */
-    public static function unusableEmails(): array
+    public static function syncsWithoutAnEmail(): array
     {
-        return [
-            'null'       => [null],
-            'empty'      => [''],
-            'whitespace' => ["  \t "],
-            'non scalar' => [['jane@example.com']],
+        $unusable = [
+            'missing'    => ['firstname' => 'Jane'],
+            'null'       => ['email' => null],
+            'empty'      => ['email' => ''],
+            'whitespace' => ['email' => "  \t "],
+            'non scalar' => ['email' => ['jane@example.com']],
         ];
+
+        $cases = [];
+
+        foreach ([HubspotAction::Create, HubspotAction::Update] as $action) {
+            foreach ($unusable as $name => $properties) {
+                $cases["{$action->value}, {$name}"] = [$action, $properties];
+            }
+        }
+
+        return $cases;
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('unusableEmails')]
-    public function test_an_unusable_email_is_never_looked_up(mixed $email): void
+    /**
+     * HubSpot identifies a contact by its email, and a consumer's email is
+     * never removed, so a sync without one is a fault in the consuming
+     * model. It fails where it is dispatched, not in a worker that would
+     * otherwise create a contact nothing can find again.
+     *
+     * @param  array<string, mixed>  $properties
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('syncsWithoutAnEmail')]
+    public function test_a_sync_without_an_email_is_rejected_at_dispatch(HubspotAction $action, array $properties): void
     {
+        $this->expectException(HubspotConfigurationException::class);
+        $this->expectExceptionMessageMatches('/email/');
+
+        new SyncContactToHubspot($this->fakeModel(properties: $properties), $action);
+    }
+
+    /**
+     * A delete acts on the stored link and never looks the email up, so a
+     * model can always be deleted.
+     */
+    public function test_a_model_without_an_email_can_still_be_deleted(): void
+    {
+        $this->seedLink('hs-001');
+
         $this->fakeHubspot([
-            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-001'], 201),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
         ]);
 
-        $this->runJob('create', $this->fakeModel(properties: ['email' => $email]));
+        $this->runJob('delete', $this->fakeModel(properties: []));
 
-        Http::assertNotSent(fn ($r) => $r->method() === 'GET');
-        Http::assertSent(fn ($r) => $r->method() === 'POST');
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && str_ends_with($r->url(), '/hs-001'));
     }
 
     public function test_product_name_is_included_in_properties_when_configured(): void

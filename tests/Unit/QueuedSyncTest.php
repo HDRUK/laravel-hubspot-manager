@@ -6,7 +6,7 @@ use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
-use Hdruk\LaravelHubspotManager\Tests\Fixtures\DetachableUser;
+use Hdruk\LaravelHubspotManager\Support\ContactEmail;
 use Hdruk\LaravelHubspotManager\Tests\Fixtures\SyncableUser;
 use Hdruk\LaravelHubspotManager\Tests\TestCase;
 use Illuminate\Database\Schema\Blueprint;
@@ -72,36 +72,12 @@ class QueuedSyncTest extends TestCase
         return $job;
     }
 
-    public function test_a_deleted_model_still_archives_its_contact_when_run_from_the_queue(): void
+    public function test_a_deleted_model_blanks_its_properties_and_keeps_its_contact(): void
     {
         Bus::fake([SyncContactToHubspot::class]);
 
         $user = SyncableUser::create(['email' => 'jane@example.com']);
-        HubspotContact::linkToUser($user->id, 'hs-001');
-
-        $user->delete();
-
-        Http::fake([
-            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(null, 204),
-        ]);
-
-        $this->runAsWorker($this->lastDispatchedJob());
-
-        Http::assertSent(fn ($r) => $r->method() === 'DELETE' && str_contains($r->url(), 'hs-001'));
-
-        $this->assertNull(HubspotContact::contactIdForUser($user->id));
-
-        $log = HubspotSyncLog::query()->latest('id')->firstOrFail();
-        $this->assertSame('delete', $log->action);
-        $this->assertSame('hs-001', $log->hubspot_contact_id);
-    }
-
-    public function test_a_deleted_model_that_clears_properties_keeps_its_contact(): void
-    {
-        Bus::fake([SyncContactToHubspot::class]);
-
-        $user = DetachableUser::create(['email' => 'jane@example.com']);
-        HubspotContact::linkToUser($user->id, 'hs-001');
+        HubspotContact::linkToUser($user->id, 'hs-001', ContactEmail::parse('jane@example.com'));
 
         $user->delete();
 
@@ -126,11 +102,11 @@ class QueuedSyncTest extends TestCase
         $this->assertSame('hs-001', $log->hubspot_contact_id);
     }
 
-    public function test_a_deleted_model_that_clears_properties_sends_nothing_when_unlinked(): void
+    public function test_a_deleted_model_sends_nothing_when_unlinked(): void
     {
         Bus::fake([SyncContactToHubspot::class]);
 
-        $user = DetachableUser::create(['email' => 'jane@example.com']);
+        $user = SyncableUser::create(['email' => 'jane@example.com']);
 
         $user->delete();
 
@@ -146,7 +122,7 @@ class QueuedSyncTest extends TestCase
      * HubSpot, so a new model for the same person finds it by email rather
      * than creating a second contact.
      */
-    public function test_a_model_readded_after_clearing_properties_adopts_the_surviving_contact(): void
+    public function test_a_model_readded_after_deletion_adopts_the_surviving_contact(): void
     {
         Bus::fake([SyncContactToHubspot::class]);
 
@@ -155,12 +131,12 @@ class QueuedSyncTest extends TestCase
             'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
         ]);
 
-        $deleted = DetachableUser::create(['email' => 'jane@example.com']);
-        HubspotContact::linkToUser($deleted->id, 'hs-001');
+        $deleted = SyncableUser::create(['email' => 'jane@example.com']);
+        HubspotContact::linkToUser($deleted->id, 'hs-001', ContactEmail::parse('jane@example.com'));
         $deleted->delete();
         $this->runAsWorker($this->lastDispatchedJob());
 
-        $readded = DetachableUser::create(['email' => 'jane@example.com']);
+        $readded = SyncableUser::create(['email' => 'jane@example.com']);
         $this->runAsWorker($this->lastDispatchedJob());
 
         Http::assertNotSent(fn ($r) => $r->method() === 'POST');
@@ -173,7 +149,7 @@ class QueuedSyncTest extends TestCase
         Bus::fake([SyncContactToHubspot::class]);
 
         $user = SyncableUser::create(['email' => 'jane@example.com']);
-        HubspotContact::linkToUser($user->id, 'hs-001');
+        HubspotContact::linkToUser($user->id, 'hs-001', ContactEmail::parse('jane@example.com'));
 
         $user->update(['email' => 'jane.new@example.com']);
         $job = $this->lastDispatchedJob();
@@ -182,12 +158,14 @@ class QueuedSyncTest extends TestCase
         SyncableUser::query()->whereKey($user->id)->update(['email' => 'jane.later@example.com']);
 
         Http::fake([
-            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001' => Http::response(['id' => 'hs-001'], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts/jane.new%40example.com*' => Http::response(null, 404),
+            'https://api.hubapi.com/crm/v3/objects/contacts/hs-001*' => Http::response(['id' => 'hs-001', 'properties' => []], 200),
+            'https://api.hubapi.com/crm/v3/objects/contacts' => Http::response(['id' => 'hs-002'], 201),
         ]);
 
         $this->runAsWorker($job);
 
-        Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+        Http::assertSent(fn ($r) => $r->method() === 'POST'
             && ($r->data()['properties']['email'] ?? null) === 'jane.new@example.com');
     }
 }

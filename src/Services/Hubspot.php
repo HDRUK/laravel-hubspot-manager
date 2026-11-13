@@ -41,7 +41,7 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
     }
 
     /**
@@ -50,14 +50,23 @@ class Hubspot
      */
     public function getContact(string $contactId, array $properties = []): array
     {
-        $query = $properties ? ['properties' => implode(',', $properties)] : [];
-
-        $response = Http::withHeaders($this->headers)
-            ->get("{$this->baseUrl}/{$this->contactsEndpoint}/{$contactId}", $query);
+        $response = $this->sendGetContact($contactId, $properties);
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
+    }
+
+    /**
+     * The contact, or null when HubSpot holds none with this id: one deleted,
+     * or merged away, since the id was stored.
+     *
+     * @param  list<string>  $properties
+     * @return array<string, mixed>|null
+     */
+    public function tryGetContact(string $contactId, array $properties = []): ?array
+    {
+        return $this->bodyUnlessNotFound($this->sendGetContact($contactId, $properties));
     }
 
     /**
@@ -66,14 +75,24 @@ class Hubspot
      */
     public function updateContact(string $contactId, array $properties): array
     {
-        $response = Http::withHeaders($this->headers)
-            ->patch("{$this->baseUrl}/{$this->contactsEndpoint}/{$contactId}", [
-                'properties' => $properties,
-            ]);
+        $response = $this->sendUpdateContact($contactId, $properties);
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
+    }
+
+    /**
+     * The updated contact, or null when HubSpot holds none with this id: one
+     * deleted, or merged away, since the id was stored. Nothing is written
+     * in that case.
+     *
+     * @param  array<string, mixed>  $properties
+     * @return array<string, mixed>|null
+     */
+    public function tryUpdateContact(string $contactId, array $properties): ?array
+    {
+        return $this->bodyUnlessNotFound($this->sendUpdateContact($contactId, $properties));
     }
 
     /**
@@ -133,7 +152,7 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
     }
 
     /**
@@ -149,7 +168,7 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
     }
 
     /**
@@ -187,7 +206,60 @@ class Hubspot
 
         $this->throwIfFailed($response);
 
-        return $response->json();
+        return $this->body($response);
+    }
+
+    /**
+     * @param  list<string>  $properties
+     */
+    private function sendGetContact(string $contactId, array $properties): Response
+    {
+        $query = $properties ? ['properties' => implode(',', $properties)] : [];
+
+        return Http::withHeaders($this->headers)
+            ->get("{$this->baseUrl}/{$this->contactsEndpoint}/{$contactId}", $query);
+    }
+
+    /**
+     * @param  array<string, mixed>  $properties
+     */
+    private function sendUpdateContact(string $contactId, array $properties): Response
+    {
+        return Http::withHeaders($this->headers)
+            ->patch("{$this->baseUrl}/{$this->contactsEndpoint}/{$contactId}", [
+                'properties' => $properties,
+            ]);
+    }
+
+    /**
+     * Null for a 404 only. Any other failure says nothing about whether the
+     * contact exists, so it is thrown.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function bodyUnlessNotFound(Response $response): ?array
+    {
+        if ($response->status() === HttpStatus::HTTP_NOT_FOUND) {
+            return null;
+        }
+
+        $this->throwIfFailed($response);
+
+        return $this->body($response);
+    }
+
+    /**
+     * The response body as an array. A success may carry no body, or one
+     * that is not a JSON object; either is an empty array, so a caller
+     * typed to receive an array never receives null.
+     *
+     * @return array<string, mixed>
+     */
+    private function body(Response $response): array
+    {
+        $body = $response->json();
+
+        return is_array($body) ? $body : [];
     }
 
     private function throwIfFailed(Response $response): void

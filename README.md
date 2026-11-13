@@ -5,7 +5,7 @@ A Laravel package for syncing application users to HubSpot contacts, with queued
 ## Requirements
 
 - PHP 8.1+
-- Laravel 10, 11, or 12
+- Laravel 11 or 12
 
 ## Installation
 
@@ -35,6 +35,7 @@ HUBSPOT_BASE_URL=https://api.hubapi.com        # default, can be omitted
 HUBSPOT_INTEGRATION_ENABLED=true               # default, can be omitted
 HUBSPOT_INTEGRATION_PRODUCT_NAME=MyApp         # optional — for your reference
 HUBSPOT_SYNC_USER_MODEL=App\Models\User        # default, can be omitted
+HUBSPOT_SYNCS_PER_10_SECONDS=25                # default, can be omitted
 ```
 
 The full config is available at `config/hubspotmanager.php` after publishing.
@@ -45,16 +46,26 @@ The full config is available at `config/hubspotmanager.php` after publishing.
 
 Add `HasHubspotContact` to any Eloquent model you want synced. Model `created`, `updated`, and `deleted` events will automatically dispatch a queued job to HubSpot.
 
+An `updated` event dispatches a job only when the save changed what `toHubspotProperties()` returns. A change HubSpot never sees, such as a login timestamp, queues nothing. A property that is an object, such as a date, always counts as changed, so return it as a string if you want it compared. Mass updates through the query builder fire no model events and so are never synced; run `hubspot:sync` afterwards if they change what HubSpot holds.
+
 ```php
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 
 class User extends Authenticatable
 {
     use HasHubspotContact;
+
+    public function hubspotOwnership(): HubspotOwnership
+    {
+        return HubspotOwnership::owns('my_system_flag');
+    }
 }
 ```
 
-A model that defines no `toHubspotProperties()`, or has no primary key yet, is rejected where the job is constructed rather than failing partway through a queued job.
+Every model must declare `hubspotOwnership()`; see [Sharing a contact with other systems](#sharing-a-contact-with-other-systems). The trait declares it abstract, so a model that leaves it out fails as soon as its class is loaded, and in static analysis.
+
+A model that defines no `toHubspotProperties()` or `hubspotOwnership()`, or has no primary key yet, is rejected where the job is constructed rather than failing partway through a queued job.
 
 `toHubspotProperties()` is called when the job is dispatched, not when it runs. The job carries the model's key and properties as they were at the moment of the change, so a retry sends exactly what the first attempt sent, and a deleted model can still be synced. The `product_name` config is read at the same point. This also means `toHubspotProperties()` runs in the request that changed the model, so anything it reads (such as `app()->environment()`) comes from that request rather than from the queue worker.
 
@@ -72,26 +83,30 @@ public function toHubspotProperties(): array
 }
 ```
 
-### What deleting a model does
+### Sharing a contact with other systems
 
-By default, deleting a model **archives** its HubSpot contact.
-
-A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. Deleting the model in one of them does not mean the person is gone. Override `onHubspotDelete()` to blank only the properties this model owns and leave the contact in place:
+A HubSpot contact is one per email, so it may be shared with other systems, or with other environments of the same system, that hold their own record for the same person. It may also predate all of them. A system cannot see the others, so the package treats every contact as shared: each model names the properties it owns, and acts on no others.
 
 ```php
-use Hdruk\LaravelHubspotManager\Support\OnHubspotDelete;
+use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 
-public function onHubspotDelete(): OnHubspotDelete
+public function hubspotOwnership(): HubspotOwnership
 {
-    return OnHubspotDelete::clearProperties('my_system_flag', 'my_system_role');
+    return HubspotOwnership::owns('my_system_flag', 'my_system_role');
 }
 ```
 
-The listed properties are set to empty, and no other property on the contact is sent. `clearProperties()` needs at least one property name; to archive, return `OnHubspotDelete::archiveContact()` (the default).
+`owns()` needs at least one property name. There is no default, since only the model knows what it owns.
+
+Properties every system sends, such as `email`, `firstname` and `lastname`, are not owned by any one of them. Whichever system syncs last sets them.
+
+### What deleting a model does
+
+Deleting a model does not mean the person is gone. Its owned properties are set to empty, no other property on the contact is sent, and the contact stays in place for the other systems. The package never archives or deletes a HubSpot contact.
 
 ### How a model is matched to a HubSpot contact
 
-Once a model has been synced, the link between it and its HubSpot contact is stored in the `hubspot_contacts` table, so updates and deletes target the correct record without any extra configuration. Installs that predate this table have their links backfilled from `hubspot_sync_logs` when the migration runs.
+Once a model has been synced, the link between it and its HubSpot contact is stored in the `hubspot_contacts` table, so updates and deletes target the correct record without any extra configuration.
 
 When a model has no stored link, the package asks HubSpot whether it already holds a contact with the same identity before creating one:
 
@@ -99,13 +114,37 @@ When a model has no stored link, the package asks HubSpot whether it already hol
 2. **Lookup by identity** — `GET /crm/v3/objects/contacts/{value}?idProperty={property}`. A contact that predates this package is adopted and updated rather than duplicated.
 3. **Create** — only when HubSpot holds no matching contact. If HubSpot rejects the create as a duplicate (409), the contact it names in the error is adopted instead. This covers the case where two queue workers race, or a contact appears between the lookup and the create.
 
-Deletes never reach step 2. A model that this package has no link for will not archive a HubSpot contact it did not create.
+Deletes never reach step 2. A model that this package has no link for sends nothing to HubSpot when deleted.
 
-The lookup matches on `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts, and is not configurable for that reason. The address is read from `toHubspotProperties()`, so it keeps working when your local column is named differently.
+The lookup matches on `email`, which is HubSpot's own [primary unique identifier](https://knowledge.hubspot.com/records/deduplication-of-records) for contacts, and is not configurable for that reason. The address is read from `toHubspotProperties()`, so it keeps working when your local column is named differently. It is trimmed and lowercased before the lookup, and the same normalised email is stored with the link.
 
-A model whose email is missing, blank, or non-scalar skips step 2 entirely and goes straight to create, because looking a contact up by an empty value would match an arbitrary record.
+A create or update whose email is missing, blank, or non-scalar is rejected where the job is constructed, with a `HubspotConfigurationException`. Without an email a contact cannot be found again, and looking one up by an empty value would match an arbitrary record. Deletes are exempt, since they act on the stored link alone.
 
-Note that the lookup matches on the model's **current** identity. If a contact exists in HubSpot under an old email address and the model's email has since changed, the lookup will not find it and a second contact is created.
+### What changing a model's email does
+
+Each link records the email it was made for, so a sync can tell when a model's email has changed.
+
+The new email is never written to the contact the model is linked to. That contact is keyed on an email other systems may still hold, so rewriting it would leave them linked to a contact that no longer holds their email. The model moves instead:
+
+1. The contact HubSpot holds for the new email is looked up.
+2. If it is the contact the model is already linked to (for example, the new email is one of its secondary emails), it is updated in place and nothing moves.
+3. Otherwise the model's owned properties are set to empty on the contact it is leaving. Every other property there stays.
+4. The contact for the new email is updated if HubSpot holds one, or created if not, with the model's own properties. Properties owned by other systems are never copied. If the model holds no `firstname` or `lastname`, that name is taken from the contact it left.
+5. The model is linked to that contact, and the sync log records `resolved_via = moved`.
+
+The link moves last, so a move that fails part way is completed when the job retries.
+
+Links made before emails were recorded hold none. The first sync after upgrading reads the linked contact's email from HubSpot and records it before deciding, which costs one extra request per link, once. If that contact holds no email in HubSpot, the sync fails rather than guess.
+
+### When a linked contact is gone from HubSpot
+
+Contacts can be deleted or merged in HubSpot by people or by other systems, leaving a model linked to a contact id HubSpot no longer holds. A sync that gets a 404 for that id does not fail; what it does depends on what it was doing:
+
+- **Updating:** the link is dropped and the model is matched by email, as on its first sync. The contact HubSpot holds for that email is updated, or one is created, and the sync log records `lookup` or `created`.
+- **Moving to a new email:** there is nothing to blank on the contact being left, and no names to carry over from it. The move carries on to the contact for the new email.
+- **Deleting:** there is nothing left to blank, so the model is unlinked and the sync is logged as succeeding, with status 204.
+
+Only a 404 is treated this way. Any other failure says nothing about whether the contact exists, so it fails the sync and is retried as usual.
 
 ## Manual usage via the Facade
 
@@ -153,7 +192,7 @@ Every sync attempt — successful or not — is recorded in the `hubspot_sync_lo
 | `resolved_via`       | How the contact was arrived at, `null` on failure |
 | `error`              | Error message on failure, `null` on success       |
 
-`resolved_via` records which of the steps above applied — `link`, `lookup`, `conflict`, or `created` — so you can see how often existing contacts are being adopted rather than duplicated:
+`resolved_via` records how the contact was arrived at — `link`, `lookup`, `conflict` or `created` from the steps above, or `moved` when a model followed its changed email to another contact (see [What changing a model's email does](#what-changing-a-models-email-does)) — so you can see how often existing contacts are being adopted rather than duplicated:
 
 ```php
 HubspotSyncLog::query()
@@ -181,7 +220,7 @@ The `hubspot_contacts` table holds the current link between a model and its HubS
 | `hubspot_contact_id` | The HubSpot contact this model is linked to                                |
 | `unlinked_at`        | Set when the link ends (the model was deleted), `null` while the link is live |
 
-Note that a model that archives on delete (the default, see [What deleting a model does](#what-deleting-a-model-does)) archives its HubSpot contact — HubSpot's delete endpoint moves the contact to the recycling bin, where it can be restored for 90 days. It is not a permanent deletion, and does not on its own satisfy a right-to-erasure request.
+Note that deleting a model leaves its HubSpot contact in place (see [What deleting a model does](#what-deleting-a-model-does)): the person's email, names, and any properties other systems wrote all remain in HubSpot. Deleting a model therefore does not satisfy a right-to-erasure request. Erase the person in HubSpot itself.
 
 ## Events
 
@@ -195,7 +234,7 @@ Event::listen(HubspotContactSynced::class, function (HubspotContactSynced $event
     // $event->action         — 'create' | 'update' | 'delete'
     // $event->statusCode     — HTTP status code
     // $event->hubspotContactId — HubSpot contact ID (nullable)
-    // $event->resolvedVia    — 'link' | 'lookup' | 'conflict' | 'created' (nullable)
+    // $event->resolvedVia    — 'link' | 'lookup' | 'conflict' | 'created' | 'moved' (nullable)
 });
 ```
 
@@ -212,6 +251,12 @@ php artisan hubspot:sync --user=42
 ```
 
 The command uses the model configured in `HUBSPOT_SYNC_USER_MODEL` and chunks records in batches of 200 to avoid memory exhaustion.
+
+## Rate limiting
+
+HubSpot limits how many requests an app may send in each 10-second window and rejects the rest. Sync jobs share one limit, `HUBSPOT_SYNCS_PER_10_SECONDS` (25 by default, and at least 1). A job over the limit is released back onto the queue and runs in a later window, so a bulk sync drains steadily rather than failing.
+
+The limit counts jobs, not requests. A sync makes one request in the common case and up to six when it moves a model to a new email, so set the limit with that in mind. It is counted in your cache store, which must be shared by every queue worker, and is per application: several applications sharing one HubSpot private app each get their own limit, and HubSpot counts them together.
 
 ## Batch operations
 
@@ -258,7 +303,7 @@ try {
 }
 ```
 
-The `SyncContactToHubspot` job retries up to 3 times with exponential backoff (10s → 60s → 300s). When all retries are exhausted, a final `failed` log entry is written with the message `All retries exhausted: ...`.
+The `SyncContactToHubspot` job fails after 3 attempts that throw, waiting 10s and then 60s between them. A job that has already waited for the rate limit waits longer, up to 300s, since Laravel picks the wait by the job's total attempts. Waiting for the rate limit is not a failure and never uses up an attempt. A job that has still not succeeded a day after it was dispatched fails regardless. When a job fails, a final `failed` log entry is written with the message `All retries exhausted: ...`.
 
 ## Testing
 

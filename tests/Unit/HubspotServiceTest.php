@@ -35,6 +35,37 @@ class HubspotServiceTest extends TestCase
         Http::preventStrayRequests();
     }
 
+    /**
+     * Every method that returns HubSpot's response body.
+     *
+     * @return array<string, array{\Closure(Hubspot): array<mixed>}>
+     */
+    public static function methodsReturningTheBody(): array
+    {
+        return [
+            'createContact'  => [fn (Hubspot $h) => $h->createContact(['email' => 'jane@example.com'])],
+            'getContact'     => [fn (Hubspot $h) => $h->getContact('12345')],
+            'updateContact'  => [fn (Hubspot $h) => $h->updateContact('12345', ['firstname' => 'Jane'])],
+            'createContacts' => [fn (Hubspot $h) => $h->createContacts([['email' => 'jane@example.com']])],
+            'updateContacts' => [fn (Hubspot $h) => $h->updateContacts([['id' => '12345', 'properties' => []]])],
+            'searchContacts' => [fn (Hubspot $h) => $h->searchContacts([])],
+        ];
+    }
+
+    /**
+     * A success with no body, or one that is not a JSON object, is still a
+     * success: the caller gets an empty array rather than a TypeError.
+     *
+     * @param  \Closure(Hubspot): array<mixed>  $call
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('methodsReturningTheBody')]
+    public function test_a_success_without_a_body_returns_an_empty_array(\Closure $call): void
+    {
+        Http::fake(['*' => Http::response(null, 204)]);
+
+        $this->assertSame([], $call($this->hubspot()));
+    }
+
     public function test_surrounding_whitespace_is_stripped_from_the_base_url(): void
     {
         config($this->validConfig());
@@ -118,6 +149,58 @@ class HubspotServiceTest extends TestCase
             && str_contains($request->url(), '/crm/v3/objects/contacts/12345')
             && $request->data()['properties']['firstname'] === 'Jane'
         );
+    }
+
+    /**
+     * The methods that answer null, rather than throw, when HubSpot holds no
+     * contact with the id: one deleted, or merged away, since it was linked.
+     *
+     * @return array<string, array{\Closure(Hubspot): ?array<mixed>}>
+     */
+    public static function methodsTryingAContactById(): array
+    {
+        return [
+            'tryGetContact'    => [fn (Hubspot $h) => $h->tryGetContact('12345', ['email'])],
+            'tryUpdateContact' => [fn (Hubspot $h) => $h->tryUpdateContact('12345', ['firstname' => 'Jane'])],
+        ];
+    }
+
+    /**
+     * @param  \Closure(Hubspot): ?array<mixed>  $call
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('methodsTryingAContactById')]
+    public function test_a_contact_hubspot_does_not_hold_is_null(\Closure $call): void
+    {
+        Http::fake(['*' => Http::response(['message' => 'resource not found'], 404)]);
+
+        $this->assertNull($call($this->hubspot()));
+    }
+
+    /**
+     * @param  \Closure(Hubspot): ?array<mixed>  $call
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('methodsTryingAContactById')]
+    public function test_a_contact_hubspot_holds_is_returned(\Closure $call): void
+    {
+        Http::fake(['*' => Http::response(['id' => '12345'], 200)]);
+
+        $this->assertSame(['id' => '12345'], $call($this->hubspot()));
+    }
+
+    /**
+     * Only a missing contact is null. Any other failure says nothing about
+     * whether the contact exists, so it is still thrown.
+     *
+     * @param  \Closure(Hubspot): ?array<mixed>  $call
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('methodsTryingAContactById')]
+    public function test_any_other_failure_trying_a_contact_is_thrown(\Closure $call): void
+    {
+        Http::fake(['*' => Http::response(['message' => 'internal error'], 500)]);
+
+        $this->expectException(HubspotApiException::class);
+
+        $call($this->hubspot());
     }
 
     public function test_find_contact_id_by_returns_the_id_of_a_matching_contact(): void
