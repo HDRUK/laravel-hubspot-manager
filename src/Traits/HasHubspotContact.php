@@ -12,7 +12,13 @@ trait HasHubspotContact
 {
     public static function bootHasHubspotContact(): void
     {
-        static::created(fn ($model) => SyncContactToHubspot::dispatch($model, HubspotAction::Create));
+        // A plain bool, not a closure: dispatchIf() builds the job only when it
+        // is true, so a disabled integration never asks the model what it owns.
+        static::created(fn ($model) => SyncContactToHubspot::dispatchIf(
+            (bool) config('hubspotmanager.default.enabled', true),
+            $model,
+            HubspotAction::Create,
+        ));
         static::updated(function ($model) {
             if ($model->hubspotPropertiesChanged()) {
                 SyncContactToHubspot::dispatch($model, HubspotAction::Update);

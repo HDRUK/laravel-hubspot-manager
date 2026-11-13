@@ -285,7 +285,9 @@ Set `HUBSPOT_INTEGRATION_PRODUCT_NAME` in your `.env` and every synced contact w
 
 ## Disabling sync
 
-Set `HUBSPOT_INTEGRATION_ENABLED=false` in your environment to stop all sync jobs from executing (jobs are still dispatched but exit immediately, keeping your queue clean).
+Set `HUBSPOT_INTEGRATION_ENABLED=false` in your environment to stop all sync jobs from executing.
+
+Creating a model while sync is disabled dispatches no job at all, so neither `toHubspotProperties()` nor `hubspotOwnership()` is called. A model that owns no property in an environment where sync is disabled, such as tests or local development, can therefore still be created. Updates and deletes are still dispatched, and exit immediately.
 
 ## Error handling
 
