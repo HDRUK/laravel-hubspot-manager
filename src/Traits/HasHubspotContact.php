@@ -29,11 +29,6 @@ trait HasHubspotContact
         ));
     }
 
-    /**
-     * Whether sync is enabled. Checked before a job is built, because
-     * building one asks the model what it owns, which a model may not know
-     * in an environment where sync is disabled.
-     */
     private static function hubspotSyncEnabled(): bool
     {
         return (bool) config('hubspotmanager.default.enabled', true);
