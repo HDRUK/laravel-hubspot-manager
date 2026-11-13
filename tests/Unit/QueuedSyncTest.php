@@ -5,6 +5,7 @@ namespace Hdruk\LaravelHubspotManager\Tests\Unit;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Models\HubspotContact;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
+use Hdruk\LaravelHubspotManager\Services\ContactSyncer;
 use Hdruk\LaravelHubspotManager\Services\Hubspot;
 use Hdruk\LaravelHubspotManager\Support\ContactEmail;
 use Hdruk\LaravelHubspotManager\Tests\Fixtures\SyncableUser;
@@ -60,7 +61,7 @@ class QueuedSyncTest extends TestCase
         /** @var SyncContactToHubspot $restored */
         $restored = unserialize(serialize($job));
 
-        $restored->handle(new Hubspot());
+        $restored->handle(new ContactSyncer(new Hubspot()));
     }
 
     private function lastDispatchedJob(): SyncContactToHubspot

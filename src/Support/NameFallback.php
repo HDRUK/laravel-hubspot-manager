@@ -1,6 +1,6 @@
 <?php
 
-namespace Hdruk\LaravelHubspotManager\Planning;
+namespace Hdruk\LaravelHubspotManager\Support;
 
 /**
  * The names a moving model takes to its new contact.

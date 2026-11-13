@@ -2,7 +2,7 @@
 
 namespace Hdruk\LaravelHubspotManager\Tests\Unit;
 
-use Hdruk\LaravelHubspotManager\Planning\NameFallback;
+use Hdruk\LaravelHubspotManager\Support\NameFallback;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
