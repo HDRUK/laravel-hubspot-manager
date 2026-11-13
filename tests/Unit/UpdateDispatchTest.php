@@ -41,6 +41,8 @@ class UpdateDispatchTest extends TestCase
     {
         parent::setUp();
 
+        config(['hubspotmanager.default.enabled' => true]);
+
         Bus::fake([SyncContactToHubspot::class]);
     }
 
