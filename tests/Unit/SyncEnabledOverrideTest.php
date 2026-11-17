@@ -94,7 +94,7 @@ class SyncEnabledOverrideTest extends TestCase
         Bus::assertNotDispatched(SyncContactToHubspot::class);
     }
 
-    public function test_the_command_follows_the_configured_models_override(): void
+    public function test_the_command_dispatches_nothing_when_the_configured_models_override_is_off(): void
     {
         config([
             'hubspotmanager.default.enabled' => true,
@@ -105,11 +105,22 @@ class SyncEnabledOverrideTest extends TestCase
         Bus::fake([SyncContactToHubspot::class]);
 
         $this->assertSame(0, Artisan::call('hubspot:sync'));
-        Bus::assertNotDispatched(SyncContactToHubspot::class);
 
-        config(['testing.hubspot_flag' => true]);
+        Bus::assertNotDispatched(SyncContactToHubspot::class);
+    }
+
+    public function test_the_command_dispatches_when_the_configured_models_override_is_on(): void
+    {
+        config([
+            'hubspotmanager.default.enabled' => false,
+            'hubspotmanager.default.models.users' => FlaggedUser::class,
+            'testing.hubspot_flag' => true,
+        ]);
+        FlaggedUser::query()->insert([['email' => 'jane@example.com']]);
+        Bus::fake([SyncContactToHubspot::class]);
 
         $this->assertSame(0, Artisan::call('hubspot:sync'));
+
         Bus::assertDispatchedTimes(SyncContactToHubspot::class, 1);
     }
 
