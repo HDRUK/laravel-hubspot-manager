@@ -17,6 +17,7 @@ use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\ContactSyncer;
 use Hdruk\LaravelHubspotManager\Support\ContactEmail;
 use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
+use Hdruk\LaravelHubspotManager\Support\HubspotSync;
 use LogicException;
 
 /**
@@ -40,6 +41,13 @@ class SyncContactToHubspot implements ShouldQueue
     public int $maxExceptions = 3;
 
     public readonly int|string $userId;
+
+    /**
+     * Kept so the worker can ask the model's class whether sync is still on.
+     *
+     * @var class-string<Model>
+     */
+    public readonly string $modelClass;
 
     /** @var array<string, mixed> */
     public readonly array $properties;
@@ -75,6 +83,7 @@ class SyncContactToHubspot implements ShouldQueue
         }
 
         $this->userId = $key;
+        $this->modelClass = $model::class;
         $this->properties = self::snapshotProperties($model);
         $this->ownership = self::snapshotOwnership($model);
         $this->email = ContactEmail::tryParseProperties($this->properties);
@@ -151,9 +160,13 @@ class SyncContactToHubspot implements ShouldQueue
         return [new RateLimited(self::RATE_LIMITER)];
     }
 
+    /**
+     * Sync is checked again here, not only at dispatch: it may have been
+     * switched off while the job waited, and the job is then dropped.
+     */
     public function handle(ContactSyncer $syncer): void
     {
-        if (!config('hubspotmanager.default.enabled', false)) {
+        if (!HubspotSync::enabledFor($this->modelClass)) {
             return;
         }
 

@@ -5,6 +5,7 @@ namespace Hdruk\LaravelHubspotManager\Commands;
 use Illuminate\Console\Command;
 use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
+use Hdruk\LaravelHubspotManager\Support\HubspotSync;
 
 class SyncHubspotContacts extends Command
 {
@@ -14,13 +15,13 @@ class SyncHubspotContacts extends Command
 
     public function handle(): int
     {
-        if (!config('hubspotmanager.default.enabled', false)) {
-            $this->warn('HubSpot sync is disabled (HUBSPOT_INTEGRATION_ENABLED=false).');
-            return Command::SUCCESS;
-        }
-
         /** @var class-string<\Illuminate\Database\Eloquent\Model> $modelClass */
         $modelClass = config('hubspotmanager.default.models.users');
+
+        if (!HubspotSync::enabledFor($modelClass)) {
+            $this->warn("HubSpot sync is disabled for {$modelClass}.");
+            return Command::SUCCESS;
+        }
 
         $option = $this->option('user');
         $id = is_int($option) || is_string($option) ? (string) $option : '';

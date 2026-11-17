@@ -6,6 +6,7 @@ use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
+use Hdruk\LaravelHubspotManager\Support\HubspotSync;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 trait HasHubspotContact
@@ -13,25 +14,33 @@ trait HasHubspotContact
     public static function bootHasHubspotContact(): void
     {
         static::created(fn ($model) => SyncContactToHubspot::dispatchIf(
-            self::hubspotSyncEnabled(),
+            static::hubspotSyncEnabled(),
             $model,
             HubspotAction::Create,
         ));
         static::updated(function ($model) {
-            if (self::hubspotSyncEnabled() && $model->hubspotPropertiesChanged()) {
+            if (static::hubspotSyncEnabled() && $model->hubspotPropertiesChanged()) {
                 SyncContactToHubspot::dispatch($model, HubspotAction::Update);
             }
         });
         static::deleted(fn ($model) => SyncContactToHubspot::dispatchIf(
-            self::hubspotSyncEnabled(),
+            static::hubspotSyncEnabled(),
             $model,
             HubspotAction::Delete,
         ));
     }
 
-    private static function hubspotSyncEnabled(): bool
+    /**
+     * Whether changes to this model are synced to HubSpot. Follows
+     * HUBSPOT_INTEGRATION_ENABLED by default.
+     *
+     * Override it in your model to switch sync some other way, such as with a
+     * feature flag. It must stay public static: the hubspot:sync command and
+     * queued jobs ask it through the model's class, with no instance.
+     */
+    public static function hubspotSyncEnabled(): bool
     {
-        return (bool) config('hubspotmanager.default.enabled', false);
+        return HubspotSync::enabledByDefault();
     }
 
     /**

@@ -16,7 +16,7 @@ model event
 
 - Takes a snapshot of the model when the job is dispatched (key, properties, ownership, email). The queued payload is plain data, so the worker never reloads the model.
 - Owns `retryUntil`, `backoff`, `maxExceptions` and the `RateLimited` middleware.
-- Checks the `enabled` flag, picks the matching `ContactSyncer` method for the action, and writes the `HubspotSyncLog` row and the `HubspotContactSynced` event for every attempt.
+- Asks whether sync is still on (see [sync-enabled.md](sync-enabled.md)), picks the matching `ContactSyncer` method for the action, and writes the `HubspotSyncLog` row and the `HubspotContactSynced` event for every attempt.
 - Makes no HubSpot calls and writes no links itself.
 
 ### `Services\ContactSyncer`: side effects
