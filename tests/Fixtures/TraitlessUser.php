@@ -6,8 +6,8 @@ use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * A model that can be synced without the trait, so it declares no
- * hubspotSyncEnabled() and follows the env var.
+ * A model that defines everything the trait would, but does not use it.
+ * The trait is required, so this model must never be synced.
  *
  * @property int $id
  * @property string $email
@@ -32,5 +32,10 @@ class TraitlessUser extends Model
     public function hubspotOwnership(): HubspotOwnership
     {
         return HubspotOwnership::owns('registry_development');
+    }
+
+    public static function hubspotSyncEnabled(): bool
+    {
+        return true;
     }
 }

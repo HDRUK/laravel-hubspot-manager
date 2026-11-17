@@ -5,7 +5,7 @@ namespace Hdruk\LaravelHubspotManager\Commands;
 use Illuminate\Console\Command;
 use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
-use Hdruk\LaravelHubspotManager\Support\HubspotSync;
+use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
 
 class SyncHubspotContacts extends Command
 {
@@ -18,7 +18,17 @@ class SyncHubspotContacts extends Command
         /** @var class-string<\Illuminate\Database\Eloquent\Model> $modelClass */
         $modelClass = config('hubspotmanager.default.models.users');
 
-        if (!HubspotSync::enabledFor($modelClass)) {
+        // Checked once, before any job is built, so a misconfigured model
+        // fails the command rather than throwing part way through the loop.
+        if (!SyncContactToHubspot::canSync($modelClass)) {
+            $this->error(HubspotConfigurationException::missingTrait($modelClass)->getMessage());
+            return Command::FAILURE;
+        }
+
+        // Guaranteed by canSync() above; the analyser cannot see a method
+        // that consuming models supply via the trait.
+        // @phpstan-ignore staticMethod.notFound
+        if (!$modelClass::hubspotSyncEnabled()) {
             $this->warn("HubSpot sync is disabled for {$modelClass}.");
             return Command::SUCCESS;
         }

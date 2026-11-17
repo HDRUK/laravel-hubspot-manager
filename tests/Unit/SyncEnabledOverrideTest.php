@@ -3,6 +3,7 @@
 namespace Hdruk\LaravelHubspotManager\Tests\Unit;
 
 use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
+use Hdruk\LaravelHubspotManager\Exceptions\HubspotConfigurationException;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\ContactSyncer;
@@ -21,8 +22,8 @@ use Illuminate\Support\Facades\Schema;
 /**
  * A consuming model may override hubspotSyncEnabled(), such as to switch sync
  * with a feature flag. Its answer then decides sync in place of the env var,
- * everywhere sync is checked. A model that does not define it follows the
- * env var.
+ * everywhere sync is checked. A model that does not override it follows the
+ * env var. A model without the trait is never synced.
  */
 class SyncEnabledOverrideTest extends TestCase
 {
@@ -131,18 +132,33 @@ class SyncEnabledOverrideTest extends TestCase
         $this->assertSame(0, HubspotSyncLog::count());
     }
 
-    public function test_a_model_without_the_trait_follows_the_env_var(): void
+    /**
+     * The trait is required. A model without it is refused where the job is
+     * built, even with sync on, rather than queued and dropped later.
+     */
+    public function test_a_job_cannot_be_built_for_a_model_without_the_trait(): void
     {
-        config(['hubspotmanager.default.models.users' => TraitlessUser::class]);
+        config(['hubspotmanager.default.enabled' => true]);
+        $user = TraitlessUser::query()->make(['email' => 'jane@example.com']);
+        $user->id = 1;
+
+        $this->expectException(HubspotConfigurationException::class);
+        $this->expectExceptionMessage(TraitlessUser::class);
+
+        new SyncContactToHubspot($user, HubspotAction::Create);
+    }
+
+    public function test_the_command_fails_for_a_model_without_the_trait(): void
+    {
+        config([
+            'hubspotmanager.default.enabled' => true,
+            'hubspotmanager.default.models.users' => TraitlessUser::class,
+        ]);
         TraitlessUser::query()->insert([['email' => 'jane@example.com']]);
         Bus::fake([SyncContactToHubspot::class]);
 
-        config(['hubspotmanager.default.enabled' => false]);
-        $this->assertSame(0, Artisan::call('hubspot:sync'));
-        Bus::assertNotDispatched(SyncContactToHubspot::class);
+        $this->assertSame(1, Artisan::call('hubspot:sync'));
 
-        config(['hubspotmanager.default.enabled' => true]);
-        $this->assertSame(0, Artisan::call('hubspot:sync'));
-        Bus::assertDispatchedTimes(SyncContactToHubspot::class, 1);
+        Bus::assertNotDispatched(SyncContactToHubspot::class);
     }
 }

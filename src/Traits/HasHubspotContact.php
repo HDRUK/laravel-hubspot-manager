@@ -6,7 +6,6 @@ use Hdruk\LaravelHubspotManager\Enums\HubspotAction;
 use Hdruk\LaravelHubspotManager\Jobs\SyncContactToHubspot;
 use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
-use Hdruk\LaravelHubspotManager\Support\HubspotSync;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 trait HasHubspotContact
@@ -40,7 +39,10 @@ trait HasHubspotContact
      */
     public static function hubspotSyncEnabled(): bool
     {
-        return HubspotSync::enabledByDefault();
+        // Off when the key is missing: mergeConfigFrom() merges only
+        // top-level keys, so a published config whose 'default' array has no
+        // 'enabled' key drops the package's default.
+        return (bool) config('hubspotmanager.default.enabled', false);
     }
 
     /**

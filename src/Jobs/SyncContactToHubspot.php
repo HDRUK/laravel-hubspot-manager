@@ -17,7 +17,7 @@ use Hdruk\LaravelHubspotManager\Models\HubspotSyncLog;
 use Hdruk\LaravelHubspotManager\Services\ContactSyncer;
 use Hdruk\LaravelHubspotManager\Support\ContactEmail;
 use Hdruk\LaravelHubspotManager\Support\HubspotOwnership;
-use Hdruk\LaravelHubspotManager\Support\HubspotSync;
+use Hdruk\LaravelHubspotManager\Traits\HasHubspotContact;
 use LogicException;
 
 /**
@@ -63,17 +63,11 @@ class SyncContactToHubspot implements ShouldQueue
     ) {
         // Checked here rather than by the type, so that a model which cannot
         // be synced fails where it is dispatched rather than part way through
-        // a queued job, without every consuming model having to declare an
-        // interface to say so.
-        if (!method_exists($model, 'toHubspotProperties')) {
-            throw HubspotConfigurationException::notContactable($model::class);
-        }
-
-        // The trait declares this abstract, so a model using it cannot omit
-        // it. One that defines toHubspotProperties() without the trait can,
-        // and there is no default: only the model knows what it owns.
-        if (!method_exists($model, 'hubspotOwnership')) {
-            throw HubspotConfigurationException::undeclaredOwnership($model::class);
+        // a queued job. A model with the trait has every method the job
+        // calls: the trait supplies them, or declares them abstract so PHP
+        // refuses to load a model that omits one.
+        if (!self::canSync($model::class)) {
+            throw HubspotConfigurationException::missingTrait($model::class);
         }
 
         $key = $model->getKey();
@@ -94,6 +88,20 @@ class SyncContactToHubspot implements ShouldQueue
         if ($action !== HubspotAction::Delete && $this->email === null) {
             throw HubspotConfigurationException::missingEmail($model::class);
         }
+    }
+
+    /**
+     * Whether a model class can be synced: it must use HasHubspotContact,
+     * directly, through a parent class, or through another trait.
+     *
+     * class_uses_recursive() reflects on every call; it walks the parents and
+     * their traits, which for a model is a handful of classes.
+     *
+     * @param  class-string<Model>  $modelClass
+     */
+    public static function canSync(string $modelClass): bool
+    {
+        return isset(class_uses_recursive($modelClass)[HasHubspotContact::class]);
     }
 
     /**
@@ -166,7 +174,9 @@ class SyncContactToHubspot implements ShouldQueue
      */
     public function handle(ContactSyncer $syncer): void
     {
-        if (!HubspotSync::enabledFor($this->modelClass)) {
+        // The constructor only accepts a model with the trait, which supplies
+        // this.
+        if (!$this->modelClass::hubspotSyncEnabled()) {
             return;
         }
 
