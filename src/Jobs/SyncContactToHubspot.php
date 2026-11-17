@@ -153,7 +153,7 @@ class SyncContactToHubspot implements ShouldQueue
 
     public function handle(ContactSyncer $syncer): void
     {
-        if (!config('hubspotmanager.default.enabled', true)) {
+        if (!config('hubspotmanager.default.enabled', false)) {
             return;
         }
 

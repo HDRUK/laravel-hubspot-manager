@@ -31,7 +31,7 @@ trait HasHubspotContact
 
     private static function hubspotSyncEnabled(): bool
     {
-        return (bool) config('hubspotmanager.default.enabled', true);
+        return (bool) config('hubspotmanager.default.enabled', false);
     }
 
     /**

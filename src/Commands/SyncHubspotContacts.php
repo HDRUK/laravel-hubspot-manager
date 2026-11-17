@@ -14,7 +14,7 @@ class SyncHubspotContacts extends Command
 
     public function handle(): int
     {
-        if (!config('hubspotmanager.default.enabled', true)) {
+        if (!config('hubspotmanager.default.enabled', false)) {
             $this->warn('HubSpot sync is disabled (HUBSPOT_INTEGRATION_ENABLED=false).');
             return Command::SUCCESS;
         }
