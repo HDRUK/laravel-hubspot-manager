@@ -285,7 +285,31 @@ Set `HUBSPOT_INTEGRATION_PRODUCT_NAME` in your `.env` and every synced contact w
 
 ## Disabling sync
 
-Set `HUBSPOT_INTEGRATION_ENABLED=false` in your environment to stop all sync jobs from executing.
+Set `HUBSPOT_INTEGRATION_ENABLED=false` in your environment to stop all sync jobs from executing. However, this will be overridden by the following mechanism.
+
+### Switching sync with a feature flag
+
+To switch sync some other way, override `hubspotSyncEnabled()` in your model. It replaces the env var for that model. For example, with Laravel Pennant:
+
+```php
+use Laravel\Pennant\Feature;
+
+class User extends Model
+{
+    use HasHubspotContact;
+
+    public static function hubspotSyncEnabled(): bool
+    {
+        // An explicit 'for' scope: this function is also called
+        // in queue workers and console commands, where no user is
+        // logged in, so the scope must be global.
+        return Feature::for(null)->active('hubspot-sync');
+    }
+}
+```
+
+- It must be `public static`. The `hubspot:sync` command and queued jobs call it on the model's class.
+- It is asked on every model change, by the command, and again when each job runs, so don't make it remember its answer. Switching it off drops jobs that are already queued.
 
 Creating, updating or deleting a model while sync is disabled dispatches no job at all, so neither `toHubspotProperties()` nor `hubspotOwnership()` is called. A model that owns no property in an environment where sync is disabled, such as tests or local development, can therefore still be saved and deleted.
 
